@@ -378,8 +378,6 @@ HTML_TEMPLATE = r"""
             datasets.push({
                 label: 'Indoor', data: indoorXY,
                 borderColor: 'rgb(52, 211, 153)',
-                backgroundColor: 'rgba(52, 211, 153, 0.08)',
-                fill: { target: { value: -100 }, above: 'rgba(52, 211, 153, 0.08)' },
                 tension: 0.3, pointRadius: showDots ? 1.5 : 0, borderWidth: 2.5, order: 1,
             });
         }
@@ -448,8 +446,7 @@ HTML_TEMPLATE = r"""
                         label: '\u0394 Indoor \u2212 Outdoor',
                         data: deltaXY,
                         borderColor: 'rgb(251, 191, 36)',
-                        backgroundColor: 'rgba(251, 191, 36, 0.12)',
-                        fill: true, tension: 0.3,
+                        tension: 0.3,
                         pointRadius: showDots ? 1.5 : 0, borderWidth: 2,
                     }],
                 },
