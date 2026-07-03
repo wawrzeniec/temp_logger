@@ -282,22 +282,35 @@ HTML_TEMPLATE = r"""
     const getRangeMinutes = r => ({'1d':1440,'2d':2880,'1w':10080,'1m':43200,'all':null})[r];
     const fmtTemp = v => v != null ? v.toFixed(1) + '\u00b0C' : '--';
 
-    function buildFillDatasets(label, meanData, minData, maxData, color, orderBase) {
+    /** "HH:MM" → minutes since midnight */
+    function hmToMins(hm) {
+        const [h, m] = hm.split(':').map(Number);
+        return h * 60 + m;
+    }
+
+    /** minutes since midnight → "HH:MM" */
+    function minsToHm(m) {
+        const h = Math.floor(m / 60) % 24;
+        const mi = Math.floor(m % 60);
+        return String(h).padStart(2, '0') + ':' + String(mi).padStart(2, '0');
+    }
+
+    function buildFillDatasets(label, meanXY, minXY, maxXY, color, orderBase) {
         const alpha = color.replace(')', ', 0.15)').replace('rgb', 'rgba');
         return [
             {
-                label: label + ' Min', data: minData,
+                label: label + ' Min', data: minXY,
                 borderColor: 'transparent', backgroundColor: 'transparent',
                 pointRadius: 0, fill: false, tension: 0.3, order: orderBase + 2,
             },
             {
-                label: label + ' Range', data: maxData,
+                label: label + ' Range', data: maxXY,
                 borderColor: 'transparent', backgroundColor: alpha,
                 pointRadius: 0, fill: {target: '-1', above: alpha, below: alpha},
                 tension: 0.3, order: orderBase + 1,
             },
             {
-                label: label, data: meanData,
+                label: label, data: meanXY,
                 borderColor: color, backgroundColor: 'transparent',
                 pointRadius: 0, borderWidth: 2.5, fill: false, tension: 0.3, order: orderBase,
             },
@@ -315,53 +328,34 @@ HTML_TEMPLATE = r"""
         const data = await resp.json();
         if (data.error) return;
 
-        // --- Stats ---
         document.getElementById('currentIn').textContent = fmtTemp(data.current_in);
         document.getElementById('avgIn').textContent = fmtTemp(data.avg_in);
         document.getElementById('avgOut').textContent = fmtTemp(data.avg_out);
         document.getElementById('lastUpdate').textContent = 'Updated ' + new Date().toLocaleTimeString();
 
-        const showDots = data.timestamps.length <= 120;
+        const n = data.timestamps.length;
+        const showDots = n <= 120;
         const isHourly = agg === 'hourly';
 
+        // Convert HH:MM strings to numeric minutes
+        const indoorX = data.timestamps.map(hmToMins);
+        const outdoorX = (isHourly ? data.timestamps : data.outdoor_timestamps).map(hmToMins);
+
         // --- Temp Chart ---
-        // In raw mode, outdoor data uses its own timestamp (2h behind) as x,
-        // so the outdoor line is visually shifted left vs indoor.
-        // In hourly mode, both share the same hourly bucket labels.
-        const indoorData = data.timestamps.map((ts, i) => ({
-            x: ts, y: data.indoor_temps[i],
-        }));
-
-        const outdoorX = isHourly ? data.timestamps : data.outdoor_timestamps;
-        const outdoorData = outdoorX.map((ts, i) => ({
-            x: ts, y: data.outdoor_temps[i],
-        }));
-        const outdoorMaxData = outdoorX.map((ts, i) => ({
-            x: ts, y: data.outdoor_max_temps[i],
-        }));
-        const outdoorMinData = outdoorX.map((ts, i) => ({
-            x: ts, y: data.outdoor_min_temps[i],
-        }));
-
         if (tempChart) tempChart.destroy();
         const ctx1 = document.getElementById('tempChart').getContext('2d');
         const datasets = [];
 
+        const indoorXY = indoorX.map((x, i) => ({x, y: data.indoor_temps[i]}));
+
         if (isHourly && data.indoor_min_temps && data.indoor_min_temps.length) {
-            const indoorMinData = data.timestamps.map((ts, i) => ({
-                x: ts, y: data.indoor_min_temps[i],
-            }));
-            const indoorMaxData = data.timestamps.map((ts, i) => ({
-                x: ts, y: data.indoor_max_temps[i],
-            }));
-            datasets.push(...buildFillDatasets(
-                'Indoor', indoorData, indoorMinData, indoorMaxData,
-                'rgb(52, 211, 153)', 1
-            ));
+            const inMinXY = indoorX.map((x, i) => ({x, y: data.indoor_min_temps[i]}));
+            const inMaxXY = indoorX.map((x, i) => ({x, y: data.indoor_max_temps[i]}));
+            datasets.push(...buildFillDatasets('Indoor', indoorXY, inMinXY, inMaxXY, 'rgb(52, 211, 153)', 1));
             datasets[datasets.length - 1].pointRadius = showDots ? 1.5 : 0;
         } else {
             datasets.push({
-                label: 'Indoor', data: indoorData,
+                label: 'Indoor', data: indoorXY,
                 borderColor: 'rgb(52, 211, 153)',
                 backgroundColor: 'rgba(52, 211, 153, 0.08)',
                 fill: { target: { value: -100 }, above: 'rgba(52, 211, 153, 0.08)' },
@@ -369,11 +363,14 @@ HTML_TEMPLATE = r"""
             });
         }
 
-        data.outdoor_temps.some(v => v != null) && datasets.push(...buildFillDatasets(
-            'Outdoor', outdoorData, outdoorMinData, outdoorMaxData,
-            'rgb(56, 189, 248)', 4
-        ));
-        datasets[datasets.length - 1].pointRadius = showDots ? 1.5 : 0;
+        const outXY = outdoorX.map((x, i) => ({x, y: data.outdoor_temps[i]}));
+        const outMinXY = outdoorX.map((x, i) => ({x, y: data.outdoor_min_temps[i]}));
+        const outMaxXY = outdoorX.map((x, i) => ({x, y: data.outdoor_max_temps[i]}));
+
+        if (data.outdoor_temps.some(v => v != null)) {
+            datasets.push(...buildFillDatasets('Outdoor', outXY, outMinXY, outMaxXY, 'rgb(56, 189, 248)', 4));
+            datasets[datasets.length - 1].pointRadius = showDots ? 1.5 : 0;
+        }
 
         tempChart = new Chart(ctx1, {
             type: 'line',
@@ -394,10 +391,10 @@ HTML_TEMPLATE = r"""
                         backgroundColor: '#1a1d27', borderColor: '#2d3148', borderWidth: 1,
                         titleColor: '#d1d5db', bodyColor: '#d1d5db',
                         callbacks: {
+                            title(items) { return items.length ? minsToHm(items[0].parsed.x) : ''; },
                             label(ctx) {
                                 const lbl = ctx.dataset.label || '';
                                 if (lbl.endsWith(' Min') || lbl.endsWith(' Range')) return null;
-                                if (ctx.parsed.x) return lbl + ': ' + ctx.parsed.y.toFixed(1) + '\u00b0C (at ' + ctx.parsed.x + ')';
                                 return lbl + ': ' + (ctx.parsed.y != null ? ctx.parsed.y.toFixed(1) + '\u00b0C' : 'N/A');
                             },
                         },
@@ -405,7 +402,8 @@ HTML_TEMPLATE = r"""
                 },
                 scales: {
                     x: {
-                        ticks: { color: '#6b7280', maxTicksLimit: 10, maxRotation: 45, minRotation: 0 },
+                        type: 'linear',
+                        ticks: { color: '#6b7280', maxTicksLimit: 10, callback: v => minsToHm(v) },
                         grid: { color: '#1f2937' },
                     },
                     y: {
@@ -416,60 +414,56 @@ HTML_TEMPLATE = r"""
             },
         });
 
-        // --- Delta Chart (hourly only — raw mode data isn't aligned) ---
-        const deltaCard = document.getElementById('deltaCard');
-        if (deltaChart) { deltaChart.destroy(); deltaChart = null; }
+        // --- Delta Chart ---
+        if (deltaChart) deltaChart.destroy();
+        const ctx2 = document.getElementById('deltaChart').getContext('2d');
 
-        if (!isHourly) {
-            deltaCard.style.display = 'none';
-        } else {
-            deltaCard.style.display = '';
-            const ctx2 = document.getElementById('deltaChart').getContext('2d');
-            const deltaData = data.timestamps.map((ts, i) => ({
-                x: ts, y: data.deltas[i],
-            }));
-            deltaChart = new Chart(ctx2, {
-                type: 'line',
-                data: {
-                    datasets: [{
-                        label: '\u0394 Indoor \u2212 Outdoor',
-                        data: deltaData,
-                        borderColor: 'rgb(251, 191, 36)',
-                        backgroundColor: 'rgba(251, 191, 36, 0.12)',
-                        fill: true, tension: 0.3,
-                        pointRadius: showDots ? 1.5 : 0, borderWidth: 2,
-                    }],
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    interaction: { mode: 'index', intersect: false },
-                    plugins: {
-                        legend: { labels: { color: '#d1d5db', usePointStyle: true, padding: 20 } },
-                        tooltip: {
-                            backgroundColor: '#1a1d27', borderColor: '#2d3148', borderWidth: 1,
-                            titleColor: '#d1d5db', bodyColor: '#d1d5db',
-                            callbacks: {
-                                label(ctx) {
-                                    const v = ctx.parsed.y;
-                                    return v != null ? ('\u0394: ' + (v>=0?'+':'') + v.toFixed(1) + '\u00b0C') : '\u0394: N/A';
-                                },
+        // Delta is plotted at indoor timestamp
+        const deltaXY = indoorX.map((x, i) => ({x, y: data.deltas[i]}));
+
+        deltaChart = new Chart(ctx2, {
+            type: 'line',
+            data: {
+                datasets: [{
+                    label: '\u0394 Indoor \u2212 Outdoor',
+                    data: deltaXY,
+                    borderColor: 'rgb(251, 191, 36)',
+                    backgroundColor: 'rgba(251, 191, 36, 0.12)',
+                    fill: true, tension: 0.3,
+                    pointRadius: showDots ? 1.5 : 0, borderWidth: 2,
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { labels: { color: '#d1d5db', usePointStyle: true, padding: 20 } },
+                    tooltip: {
+                        backgroundColor: '#1a1d27', borderColor: '#2d3148', borderWidth: 1,
+                        titleColor: '#d1d5db', bodyColor: '#d1d5db',
+                        callbacks: {
+                            title(items) { return items.length ? minsToHm(items[0].parsed.x) : ''; },
+                            label(ctx) {
+                                const v = ctx.parsed.y;
+                                return v != null ? ('\u0394: ' + (v>=0?'+':'') + v.toFixed(1) + '\u00b0C') : '\u0394: N/A';
                             },
                         },
                     },
-                    scales: {
-                        x: {
-                            ticks: { color: '#6b7280', maxTicksLimit: 10, maxRotation: 45, minRotation: 0 },
-                            grid: { color: '#1f2937' },
-                        },
-                        y: {
-                            ticks: { color: '#6b7280', callback: v => (v>=0?'+':'') + v + '\u00b0C' },
-                            grid: { color: '#1f2937' },
-                        },
+                },
+                scales: {
+                    x: {
+                        type: 'linear',
+                        ticks: { color: '#6b7280', maxTicksLimit: 10, callback: v => minsToHm(v) },
+                        grid: { color: '#1f2937' },
+                    },
+                    y: {
+                        ticks: { color: '#6b7280', callback: v => (v>=0?'+':'') + v + '\u00b0C' },
+                        grid: { color: '#1f2937' },
                     },
                 },
-            });
-        }
+            },
+        });
     }
 
     fetchData();
