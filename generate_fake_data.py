@@ -15,6 +15,7 @@ def create_fake_data():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp TEXT NOT NULL,
             arduino_millis INTEGER,
+            raw_voltage REAL,
             temperature_c REAL NOT NULL,
             outdoor_temp_c REAL,
             outdoor_max_c REAL,
@@ -57,10 +58,13 @@ def create_fake_data():
         # outdoor_timestamp: shifted -2h to match the real data lag pattern
         outdoor_ts = current_time - timedelta(hours=2)
         
+        # Fake raw voltage: ~733mV at 22°C (10mV/°C thermistor slope for typical NTC divider)
+        raw_voltage = 733 + (indoor_temp - 22.0) * 10 + random.uniform(-2, 2)
+
         cursor.execute('''
-            INSERT INTO temperature_readings (timestamp, arduino_millis, temperature_c, outdoor_temp_c, outdoor_max_c, outdoor_min_c, outdoor_timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (current_time.strftime('%Y-%m-%d %H:%M:%S'), millis, indoor_temp, outdoor_temp, outdoor_max, outdoor_min,
+            INSERT INTO temperature_readings (timestamp, arduino_millis, raw_voltage, temperature_c, outdoor_temp_c, outdoor_max_c, outdoor_min_c, outdoor_timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (current_time.strftime('%Y-%m-%d %H:%M:%S'), millis, raw_voltage, indoor_temp, outdoor_temp, outdoor_max, outdoor_min,
               outdoor_ts.strftime('%Y-%m-%d %H:%M:%S')))
         
         current_time += timedelta(minutes=5)

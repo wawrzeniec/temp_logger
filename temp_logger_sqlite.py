@@ -19,6 +19,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp TEXT NOT NULL,
             arduino_millis INTEGER,
+            raw_voltage REAL,
             temperature_c REAL NOT NULL,
             outdoor_temp_c REAL,
             outdoor_max_c REAL,
@@ -27,9 +28,12 @@ def init_db():
         )
     ''')
     
-    # Migration: Add outdoor columns if upgrading from an older DB version
+    # Migration: Add columns if upgrading from an older DB version
     cursor.execute("PRAGMA table_info(temperature_readings)")
     columns = [info[1] for info in cursor.fetchall()]
+    if 'raw_voltage' not in columns:
+        cursor.execute("ALTER TABLE temperature_readings ADD COLUMN raw_voltage REAL")
+        print("Added raw_voltage column to database")
     if 'outdoor_temp_c' not in columns:
         cursor.execute("ALTER TABLE temperature_readings ADD COLUMN outdoor_temp_c REAL")
         print("Added outdoor_temp_c column to database")
@@ -47,13 +51,13 @@ def init_db():
     conn.commit()
     conn.close()
 
-def insert_reading(timestamp, arduino_millis, temp_c, outdoor_temp_c, outdoor_max_c=None, outdoor_min_c=None, outdoor_timestamp=None):
+def insert_reading(timestamp, arduino_millis, raw_voltage, temp_c, outdoor_temp_c, outdoor_max_c=None, outdoor_min_c=None, outdoor_timestamp=None):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
-        INSERT INTO temperature_readings (timestamp, arduino_millis, temperature_c, outdoor_temp_c, outdoor_max_c, outdoor_min_c, outdoor_timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (timestamp, arduino_millis, temp_c, outdoor_temp_c, outdoor_max_c, outdoor_min_c, outdoor_timestamp))
+        INSERT INTO temperature_readings (timestamp, arduino_millis, raw_voltage, temperature_c, outdoor_temp_c, outdoor_max_c, outdoor_min_c, outdoor_timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (timestamp, arduino_millis, raw_voltage, temp_c, outdoor_temp_c, outdoor_max_c, outdoor_min_c, outdoor_timestamp))
     conn.commit()
     conn.close()
 
@@ -68,10 +72,11 @@ def main():
             line = ser.readline().decode('utf-8').strip()
             if line:
                 data = line.split(',')
-                if len(data) == 2:
+                if len(data) == 3:
                     try:
                         arduino_millis = int(data[0])
-                        temp_c = float(data[1])
+                        raw_voltage = float(data[1])
+                        temp_c = float(data[2])
                         now_dt = datetime.now()
                         now = now_dt.strftime('%Y-%m-%d %H:%M:%S')
                         
@@ -87,16 +92,16 @@ def main():
                             outdoor_ts = (now_dt - timedelta(hours=2)).strftime('%Y-%m-%d %H:%M:%S')
                             mts = outdoor_data['timestamp']  # raw UTC ref for logging
                             mts_zurich = outdoor_data['timestamp_zurich']
-                            insert_reading(now, arduino_millis, temp_c, outdoor_temp, outdoor_max, outdoor_min, outdoor_ts)
+                            insert_reading(now, arduino_millis, raw_voltage, temp_c, outdoor_temp, outdoor_max, outdoor_min, outdoor_ts)
                             out_str = f"{outdoor_temp:.1f}°C" if outdoor_temp is not None else "N/A"
                             max_str = f"{outdoor_max:.1f}" if outdoor_max is not None else "N/A"
                             min_str = f"{outdoor_min:.1f}" if outdoor_min is not None else "N/A"
-                            print(f"Logged: In={temp_c:.1f}°C, Out={out_str} "
+                            print(f"Logged: In={temp_c:.1f}°C (raw={raw_voltage:.0f}mV), Out={out_str} "
                                   f"(max={max_str}, min={min_str}) "
                                   f"[Outdoor ts: {outdoor_ts}, MeteoSwiss: {mts_zurich} ({mts} UTC)] at {now}")
                         else:
-                            insert_reading(now, arduino_millis, temp_c, None, None, None, None)
-                            print(f"Logged: In={temp_c:.1f}°C, Out=Failed at {now}")
+                            insert_reading(now, arduino_millis, raw_voltage, temp_c, None, None, None, None)
+                            print(f"Logged: In={temp_c:.1f}°C (raw={raw_voltage:.0f}mV), Out=Failed at {now}")
                         
                     except ValueError as e:
                         print(f"Parse error: {e}")
