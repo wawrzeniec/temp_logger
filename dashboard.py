@@ -119,6 +119,8 @@ HTML_TEMPLATE = r"""
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Pi Temp Monitor</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/luxon@3.6.1/build/global/luxon.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1/dist/chartjs-adapter-luxon.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
 <style>
     :root {
@@ -317,19 +319,7 @@ HTML_TEMPLATE = r"""
 
     const getRangeMinutes = r => ({'1d':1440,'2d':2880,'1w':10080,'1m':43200,'all':null})[r];
     const fmtTemp = v => v != null ? v.toFixed(1) + '\u00b0C' : '--';
-
-    /** "HH:MM" → minutes since midnight */
-    function hmToMins(hm) {
-        const [h, m] = hm.split(':').map(Number);
-        return h * 60 + m;
-    }
-
-    /** minutes since midnight → "HH:MM" */
-    function minsToHm(m) {
-        const h = Math.floor(m / 60) % 24;
-        const mi = Math.floor(m % 60);
-        return String(h).padStart(2, '0') + ':' + String(mi).padStart(2, '0');
-    }
+    const fmtTime = ts => luxon.DateTime.fromISO(ts).toFormat('HH:mm');
 
     function buildFillDatasets(label, meanXY, minXY, maxXY, color, orderBase) {
         const alpha = color.replace(')', ', 0.15)').replace('rgb', 'rgba');
@@ -373,20 +363,16 @@ HTML_TEMPLATE = r"""
         const showDots = n <= 120;
         const isHourly = agg === 'hourly';
 
-        // Convert HH:MM strings to numeric minutes
-        const indoorX = data.timestamps.map(hmToMins);
-        const outdoorX = data.outdoor_timestamps.map(hmToMins);
-
         // --- Temp Chart ---
         if (tempChart) tempChart.destroy();
         const ctx1 = document.getElementById('tempChart').getContext('2d');
         const datasets = [];
 
-        const indoorXY = indoorX.map((x, i) => ({x, y: data.indoor_temps[i]}));
+        const indoorXY = data.timestamps.map((ts, i) => ({x: ts, y: data.indoor_temps[i]}));
 
         if (isHourly && data.indoor_min_temps && data.indoor_min_temps.length) {
-            const inMinXY = indoorX.map((x, i) => ({x, y: data.indoor_min_temps[i]}));
-            const inMaxXY = indoorX.map((x, i) => ({x, y: data.indoor_max_temps[i]}));
+            const inMinXY = data.timestamps.map((ts, i) => ({x: ts, y: data.indoor_min_temps[i]}));
+            const inMaxXY = data.timestamps.map((ts, i) => ({x: ts, y: data.indoor_max_temps[i]}));
             datasets.push(...buildFillDatasets('Indoor', indoorXY, inMinXY, inMaxXY, 'rgb(52, 211, 153)', 1));
             datasets[datasets.length - 1].pointRadius = showDots ? 1.5 : 0;
         } else {
@@ -397,9 +383,9 @@ HTML_TEMPLATE = r"""
             });
         }
 
-        const outXY = outdoorX.map((x, i) => ({x, y: data.outdoor_temps[i]}));
-        const outMinXY = outdoorX.map((x, i) => ({x, y: data.outdoor_min_temps[i]}));
-        const outMaxXY = outdoorX.map((x, i) => ({x, y: data.outdoor_max_temps[i]}));
+        const outXY = data.outdoor_timestamps.map((ts, i) => ({x: ts, y: data.outdoor_temps[i]}));
+        const outMinXY = data.outdoor_timestamps.map((ts, i) => ({x: ts, y: data.outdoor_min_temps[i]}));
+        const outMaxXY = data.outdoor_timestamps.map((ts, i) => ({x: ts, y: data.outdoor_max_temps[i]}));
 
         if (data.outdoor_temps.some(v => v != null)) {
             datasets.push(...buildFillDatasets('Outdoor', outXY, outMinXY, outMaxXY, 'rgb(56, 189, 248)', 4));
@@ -425,7 +411,7 @@ HTML_TEMPLATE = r"""
                         backgroundColor: '#1a1d27', borderColor: '#2d3148', borderWidth: 1,
                         titleColor: '#d1d5db', bodyColor: '#d1d5db',
                         callbacks: {
-                            title(items) { return items.length ? minsToHm(items[0].parsed.x) : ''; },
+                            title(items) { return items.length ? fmtTime(items[0].parsed.x) : ''; },
                             label(ctx) {
                                 const lbl = ctx.dataset.label || '';
                                 if (lbl.endsWith(' Min') || lbl.endsWith(' Range')) return null;
@@ -449,8 +435,9 @@ HTML_TEMPLATE = r"""
                 },
                 scales: {
                     x: {
-                        type: 'linear',
-                        ticks: { color: '#6b7280', maxTicksLimit: 10, callback: v => minsToHm(v) },
+                        type: 'time',
+                        time: { unit: 'hour', displayFormats: { hour: 'HH:mm', minute: 'HH:mm', day: 'MM-dd HH:mm' } },
+                        ticks: { color: '#6b7280', maxTicksLimit: 10 },
                         grid: { color: '#1f2937' },
                     },
                     y: {
@@ -465,60 +452,61 @@ HTML_TEMPLATE = r"""
         if (deltaChart) deltaChart.destroy();
         const ctx2 = document.getElementById('deltaChart').getContext('2d');
 
-        const deltaXY = indoorX.map((x, i) => ({x, y: data.deltas[i]}));
+        const deltaXY = data.timestamps.map((ts, i) => ({x: ts, y: data.deltas[i]}));
 
         deltaChart = new Chart(ctx2, {
-                type: 'line',
-                data: {
-                    datasets: [{
-                        label: '\u0394 Indoor \u2212 Outdoor',
-                        data: deltaXY,
-                        borderColor: 'rgb(251, 191, 36)',
-                        tension: 0.3,
-                        pointRadius: showDots ? 1.5 : 0, borderWidth: 2,
-                    }],
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    interaction: { mode: 'x', intersect: false },
-                    plugins: {
-                        legend: { labels: { color: '#d1d5db', usePointStyle: true, padding: 20 } },
-                        tooltip: {
-                            backgroundColor: '#1a1d27', borderColor: '#2d3148', borderWidth: 1,
-                            titleColor: '#d1d5db', bodyColor: '#d1d5db',
-                            callbacks: {
-                                title(items) { return items.length ? minsToHm(items[0].parsed.x) : ''; },
-                                label(ctx) {
-                                    const v = ctx.parsed.y;
-                                    return v != null ? ('\u0394: ' + (v>=0?'+':'') + v.toFixed(1) + '\u00b0C') : '\u0394: N/A';
-                                },
+            type: 'line',
+            data: {
+                datasets: [{
+                    label: '\u0394 Indoor \u2212 Outdoor',
+                    data: deltaXY,
+                    borderColor: 'rgb(251, 191, 36)',
+                    pointRadius: showDots ? 1.5 : 0, borderWidth: 2,
+                    tension: 0.3,
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'x', intersect: false },
+                plugins: {
+                    legend: { labels: { color: '#d1d5db', usePointStyle: true, padding: 20 } },
+                    tooltip: {
+                        backgroundColor: '#1a1d27', borderColor: '#2d3148', borderWidth: 1,
+                        titleColor: '#d1d5db', bodyColor: '#d1d5db',
+                        callbacks: {
+                            title(items) { return items.length ? fmtTime(items[0].parsed.x) : ''; },
+                            label(ctx) {
+                                const v = ctx.parsed.y;
+                                return v != null ? ('\u0394: ' + (v>=0?'+':'') + v.toFixed(1) + '\u00b0C') : '\u0394: N/A';
                             },
                         },
+                    },
+                    zoom: {
+                        pan: { enabled: true, mode: 'x', onPanComplete({chart}) { syncZoom(chart, tempChart); } },
                         zoom: {
-                            pan: { enabled: true, mode: 'x', onPanComplete({chart}) { syncZoom(chart, tempChart); } },
-                            zoom: {
-                                wheel: { enabled: true },
-                                pinch: { enabled: true },
-                                mode: 'x',
-                                onZoomComplete({chart}) { syncZoom(chart, tempChart); },
-                            },
-                        },
-                    },
-                    scales: {
-                        x: {
-                            type: 'linear',
-                            ticks: { color: '#6b7280', maxTicksLimit: 10, callback: v => minsToHm(v) },
-                            grid: { color: '#1f2937' },
-                        },
-                        y: {
-                            ticks: { color: '#6b7280', callback: v => (v>=0?'+':'') + v + '\u00b0C' },
-                            grid: { color: '#1f2937' },
+                            wheel: { enabled: true },
+                            pinch: { enabled: true },
+                            mode: 'x',
+                            onZoomComplete({chart}) { syncZoom(chart, tempChart); },
                         },
                     },
                 },
-            });
-        }
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: { unit: 'hour', displayFormats: { hour: 'HH:mm', minute: 'HH:mm', day: 'MM-dd HH:mm' } },
+                        ticks: { color: '#6b7280', maxTicksLimit: 10 },
+                        grid: { color: '#1f2937' },
+                    },
+                    y: {
+                        ticks: { color: '#6b7280', callback: v => (v>=0?'+':'') + v + '\u00b0C' },
+                        grid: { color: '#1f2937' },
+                    },
+                },
+            },
+        });
+    }
 
     fetchData();
     setInterval(fetchData, 60000);
@@ -612,7 +600,7 @@ def get_data():
         in_ds = maybe_downsample(rows_in, 'raw', max_points=250)
         out_ds = maybe_downsample(rows_out, 'raw', max_points=250)
 
-        timestamps = [r['timestamp'].split(' ')[1][:5] for r in in_ds]
+        timestamps = [r['timestamp'] for r in in_ds]
         indoor_temps = [r['temperature_c'] for r in in_ds]
         indoor_min_temps = [r['indoor_min_c'] for r in in_ds]
         indoor_max_temps = [r['indoor_max_c'] for r in in_ds]
@@ -620,20 +608,16 @@ def get_data():
         outdoor_temps = [r['outdoor_temp_c'] for r in out_ds]
         outdoor_max_temps = [r['outdoor_max_c'] for r in out_ds]
         outdoor_min_temps = [r['outdoor_min_c'] for r in out_ds]
-        outdoor_timestamps = [
-            r['timestamp'].split(' ')[1][:5] if r['timestamp'] else None
-            for r in out_ds
-        ]
+        outdoor_timestamps = [r['timestamp'] for r in out_ds if r['timestamp']]
 
-        # Delta: match each indoor hour against an outdoor hour at the same HH
+        # Delta: match each indoor hour against an outdoor hour at the same timestamp
         out_lookup = {
-            r['timestamp'].split(' ')[1][:5]: r['outdoor_temp_c']
+            r['timestamp']: r['outdoor_temp_c']
             for r in rows_out if r['outdoor_temp_c'] is not None
         }
         deltas = []
         for r in in_ds:
-            key = r['timestamp'].split(' ')[1][:5]
-            out_val = out_lookup.get(key)
+            out_val = out_lookup.get(r['timestamp'])
             if r['temperature_c'] is not None and out_val is not None:
                 deltas.append(r['temperature_c'] - out_val)
             else:
@@ -642,19 +626,19 @@ def get_data():
         # Raw mode
         downsampled = maybe_downsample(rows, aggregation, max_points=500)
 
-        timestamps = [r['timestamp'].split(' ')[1][:5] for r in downsampled]
+        timestamps = [r['timestamp'] for r in downsampled]
         indoor_temps = [r['temperature_c'] for r in downsampled]
         outdoor_temps = [r['outdoor_temp_c'] for r in downsampled]
         outdoor_max_temps = [r['outdoor_max_c'] for r in downsampled]
         outdoor_min_temps = [r['outdoor_min_c'] for r in downsampled]
         outdoor_timestamps = [
-            r['outdoor_timestamp'].split(' ')[1][:5] if r['outdoor_timestamp'] else None
+            r['outdoor_timestamp'] if r['outdoor_timestamp'] else None
             for r in downsampled
         ]
         indoor_min_temps = []
         indoor_max_temps = []
 
-        # Build outdoor lookup from raw rows for delta
+        # Build outdoor lookup from raw rows for delta (indexed by HH:MM)
         outdoor_by_ts = {}
         for r in rows:
             ots = r['outdoor_timestamp']
@@ -664,8 +648,8 @@ def get_data():
 
         deltas = []
         for r in downsampled:
-            ts = r['timestamp'].split(' ')[1][:5]
-            out_val = outdoor_by_ts.get(ts)
+            ts_hm = r['timestamp'].split(' ')[1][:5]
+            out_val = outdoor_by_ts.get(ts_hm)
             if r['temperature_c'] is not None and out_val is not None:
                 deltas.append(r['temperature_c'] - out_val)
             else:
