@@ -330,9 +330,17 @@ HTML_TEMPLATE = r"""
     const getRangeMinutes = r => ({'1d':1440,'2d':2880,'1w':10080,'1m':43200,'all':null})[r];
     const fmtTemp = v => v != null ? v.toFixed(1) + '\u00b0C' : '--';
     const fmtTime = ts => {
-        if (typeof ts === 'number') ts = new Date(ts).toISOString().replace('T', ' ').slice(0, 19);
+        if (typeof ts === 'number') {
+            return new Date(ts).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+        }
         if (typeof ts !== 'string') return '';
-        return new Date(ts.replace(' ', 'T')).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+        // Parse "YYYY-MM-DD HH:MM:SS" as local time (not ISO/UTC)
+        const [datePart, timePart] = ts.split(' ');
+        if (!datePart || !timePart) return '';
+        const [y, m, d] = datePart.split('-').map(Number);
+        const [hh, mm] = timePart.split(':').map(Number);
+        const dt = new Date(y, m - 1, d, hh, mm);
+        return dt.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
     };
 
     function buildFillDatasets(label, meanXY, minXY, maxXY, color, orderBase) {
@@ -348,7 +356,6 @@ HTML_TEMPLATE = r"""
                 borderColor: 'transparent', backgroundColor: alpha,
                 pointRadius: 0, fill: {target: '-1', above: alpha, below: alpha},
                 tension: 0.3, order: orderBase + 1,
-            },
             },
             {
                 label: label, data: meanXY,
