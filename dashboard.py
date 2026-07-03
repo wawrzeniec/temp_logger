@@ -418,10 +418,7 @@ HTML_TEMPLATE = r"""
         if (deltaChart) deltaChart.destroy();
         const ctx2 = document.getElementById('deltaChart').getContext('2d');
 
-        // In raw mode deltas are grouped by outdoor_timestamp hour;
-        // in hourly mode they're per bucket. Use dedicated delta_timestamps.
-        const deltaX = (data.delta_timestamps || data.timestamps).map(hmToMins);
-        const deltaXY = deltaX.map((x, i) => ({x, y: data.deltas[i]}));
+        const deltaXY = indoorX.map((x, i) => ({x, y: data.deltas[i]}));
 
         deltaChart = new Chart(ctx2, {
                 type: 'line',
@@ -520,7 +517,7 @@ def get_data():
             "timestamps": [], "indoor_temps": [], "outdoor_temps": [],
             "outdoor_max_temps": [], "outdoor_min_temps": [],
             "indoor_min_temps": [], "indoor_max_temps": [],
-            "outdoor_timestamps": [], "deltas": [], "delta_timestamps": [],
+            "outdoor_timestamps": [], "deltas": [],
             "current_in": None, "avg_in": None, "avg_out": None,
         })
 
@@ -547,37 +544,26 @@ def get_data():
         indoor_max_temps = []
 
     # --- Deltas ---
-    # Raw mode: group by outdoor_timestamp hour — only compare indoor and
-    #           outdoor that share the same outdoor_timestamp (i.e. the same
-    #           MeteoSwiss hourly reading). One delta per outdoor hour.
-    # Hourly mode: row-by-row — both values are already in the same bucket.
-    if aggregation == 'hourly':
-        deltas = []
-        for r in downsampled:
-            if r['temperature_c'] is not None and r['outdoor_temp_c'] is not None:
-                deltas.append(r['temperature_c'] - r['outdoor_temp_c'])
-            else:
-                deltas.append(None)
-        delta_timestamps = timestamps
-    else:
-        delta_groups = defaultdict(lambda: {'indoor': [], 'outdoor': None, 'ts': None})
-        for r in rows:
-            ots = r['outdoor_timestamp']
-            if not ots or r['outdoor_temp_c'] is None or r['temperature_c'] is None:
-                continue
-            key = ots[:13]  # "YYYY-MM-DD HH"
-            g = delta_groups[key]
-            g['indoor'].append(r['temperature_c'])
-            g['outdoor'] = r['outdoor_temp_c']
-            g['ts'] = ots.split(' ')[1][:5] if ' ' in ots else ots
+    # Delta only exists where indoor(timestamp) and outdoor(outdoor_timestamp)
+    # share the same HH:MM. outdoor data for time X only appears once a row
+    # with outdoor_timestamp=X has been logged (~2h after X).
+    # Build a lookup: HH:MM → outdoor_temp_c from all raw rows.
+    outdoor_by_ts = {}
+    for r in rows:
+        ots = r['outdoor_timestamp']
+        if ots and r['outdoor_temp_c'] is not None:
+            key = ots.split(' ')[1][:5] if ' ' in ots else ots[:5]
+            # Keep the latest value per key (rows are ordered by timestamp ASC)
+            outdoor_by_ts[key] = r['outdoor_temp_c']
 
-        deltas = []
-        delta_timestamps = []
-        for key in sorted(delta_groups.keys()):
-            g = delta_groups[key]
-            if g['indoor'] and g['outdoor'] is not None:
-                delta_timestamps.append(g['ts'])
-                deltas.append(sum(g['indoor']) / len(g['indoor']) - g['outdoor'])
+    deltas = []
+    for r in downsampled:
+        ts = r['timestamp'].split(' ')[1][:5]
+        out_val = outdoor_by_ts.get(ts)
+        if r['temperature_c'] is not None and out_val is not None:
+            deltas.append(r['temperature_c'] - out_val)
+        else:
+            deltas.append(None)
 
     all_in = [r['temperature_c'] for r in rows if r['temperature_c'] is not None]
     all_out = [r['outdoor_temp_c'] for r in rows if r['outdoor_temp_c'] is not None]
@@ -595,7 +581,6 @@ def get_data():
         "indoor_max_temps": indoor_max_temps,
         "outdoor_timestamps": outdoor_timestamps,
         "deltas": deltas,
-        "delta_timestamps": delta_timestamps,
         "current_in": all_in[-1] if all_in else None,
         "avg_in": avg_in,
         "avg_out": avg_out,
