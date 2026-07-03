@@ -16,7 +16,10 @@ def create_fake_data():
             timestamp TEXT NOT NULL,
             arduino_millis INTEGER,
             temperature_c REAL NOT NULL,
-            outdoor_temp_c REAL
+            outdoor_temp_c REAL,
+            outdoor_max_c REAL,
+            outdoor_min_c REAL,
+            outdoor_timestamp TEXT
         )
     ''')
     
@@ -47,10 +50,18 @@ def create_fake_data():
         outdoor_noise = random.uniform(-1.0, 1.0)
         outdoor_temp = base_outdoor_temp + outdoor_variation + outdoor_noise
         
+        # Max/min for the hour: max is temp + small offset, min is temp - small offset
+        outdoor_max = outdoor_temp + random.uniform(0.5, 1.5)
+        outdoor_min = outdoor_temp - random.uniform(0.5, 1.5)
+        
+        # outdoor_timestamp: shifted -2h to match the real data lag pattern
+        outdoor_ts = current_time - timedelta(hours=2)
+        
         cursor.execute('''
-            INSERT INTO temperature_readings (timestamp, arduino_millis, temperature_c, outdoor_temp_c)
-            VALUES (?, ?, ?, ?)
-        ''', (current_time.strftime('%Y-%m-%d %H:%M:%S'), millis, indoor_temp, outdoor_temp))
+            INSERT INTO temperature_readings (timestamp, arduino_millis, temperature_c, outdoor_temp_c, outdoor_max_c, outdoor_min_c, outdoor_timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (current_time.strftime('%Y-%m-%d %H:%M:%S'), millis, indoor_temp, outdoor_temp, outdoor_max, outdoor_min,
+              outdoor_ts.strftime('%Y-%m-%d %H:%M:%S')))
         
         current_time += timedelta(minutes=5)
         millis += 300000
@@ -70,12 +81,18 @@ def create_fake_data():
     min_in, max_in, avg_in = cursor.fetchone()
     cursor.execute('SELECT MIN(outdoor_temp_c), MAX(outdoor_temp_c), AVG(outdoor_temp_c) FROM temperature_readings')
     min_out, max_out, avg_out = cursor.fetchone()
+    cursor.execute('SELECT MIN(outdoor_min_c), MAX(outdoor_max_c) FROM temperature_readings')
+    min_out_range, max_out_range = cursor.fetchone()
+    cursor.execute('SELECT MIN(outdoor_timestamp), MAX(outdoor_timestamp) FROM temperature_readings WHERE outdoor_timestamp IS NOT NULL')
+    min_ots, max_ots = cursor.fetchone()
     conn.close()
     
     print(f"Total readings: {count}")
     print(f"Time range: {min_time} to {max_time}")
     print(f"\nIndoor temps: {min_in:.1f}°C to {max_in:.1f}°C (avg: {avg_in:.1f}°C)")
     print(f"Outdoor temps: {min_out:.1f}°C to {max_out:.1f}°C (avg: {avg_out:.1f}°C)")
+    print(f"Outdoor hourly max range: {min_out_range:.1f}°C to {max_out_range:.1f}°C")
+    print(f"Outdoor timestamps: {min_ots} to {max_ots}")
 
 if __name__ == '__main__':
     create_fake_data()
