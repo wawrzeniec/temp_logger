@@ -119,8 +119,8 @@ HTML_TEMPLATE = r"""
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Pi Temp Monitor</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/luxon@3.6.1/build/global/luxon.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1/build/chartjs-adapter-luxon.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/date-fns@3.6.0/cdn.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
 <style>
     :root {
@@ -319,7 +319,10 @@ HTML_TEMPLATE = r"""
 
     const getRangeMinutes = r => ({'1d':1440,'2d':2880,'1w':10080,'1m':43200,'all':null})[r];
     const fmtTemp = v => v != null ? v.toFixed(1) + '\u00b0C' : '--';
-    const fmtTime = ts => luxon.DateTime.fromISO(ts).toFormat('HH:mm');
+    const fmtTime = ts => {
+        const d = new Date(ts.replace(' ', 'T'));
+        return d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+    };
 
     function buildFillDatasets(label, meanXY, minXY, maxXY, color, orderBase) {
         const alpha = color.replace(')', ', 0.15)').replace('rgb', 'rgba');
