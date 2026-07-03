@@ -360,7 +360,7 @@ HTML_TEMPLATE = r"""
 
         // Convert HH:MM strings to numeric minutes
         const indoorX = data.timestamps.map(hmToMins);
-        const outdoorX = (isHourly ? data.timestamps : data.outdoor_timestamps).map(hmToMins);
+        const outdoorX = data.outdoor_timestamps.map(hmToMins);
 
         // --- Temp Chart ---
         if (tempChart) tempChart.destroy();
