@@ -319,8 +319,9 @@ HTML_TEMPLATE = r"""
     const getRangeMinutes = r => ({'1d':1440,'2d':2880,'1w':10080,'1m':43200,'all':null})[r];
     const fmtTemp = v => v != null ? v.toFixed(1) + '\u00b0C' : '--';
     const fmtTime = ts => {
-        const d = new Date(ts.replace(' ', 'T'));
-        return d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+        if (typeof ts === 'number') ts = new Date(ts).toISOString().replace('T', ' ').slice(0, 19);
+        if (typeof ts !== 'string') return '';
+        return new Date(ts.replace(' ', 'T')).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
     };
 
     function buildFillDatasets(label, meanXY, minXY, maxXY, color, orderBase) {
@@ -492,7 +493,9 @@ HTML_TEMPLATE = r"""
     setInterval(fetchData, 60000);
 
     let _panning = false, _panCanvas = null, _panStartX = 0;
-    let _anchor = {}; // { id: { min, max } } captured at mousedown
+    let _anchor = {};
+    // Touch state
+    let _touches = 0, _pinchDist0 = 0;
 
     function timeScale(ch) { return ch ? ch.scales.x : null; }
 
@@ -521,10 +524,7 @@ HTML_TEMPLATE = r"""
         }
     }
 
-    function onMouseDown(e) {
-        _panning = true;
-        _panCanvas = e.target;
-        _panStartX = e.clientX;
+    function captureAnchor() {
         _anchor = {};
         for (const id of ['tempChart', 'deltaChart']) {
             const ch = id === 'tempChart' ? tempChart : deltaChart;
@@ -532,22 +532,80 @@ HTML_TEMPLATE = r"""
             if (ts) _anchor[id] = { min: ts.min, max: ts.max };
         }
     }
-    document.getElementById('tempChart').addEventListener('mousedown', onMouseDown);
-    document.getElementById('deltaChart').addEventListener('mousedown', onMouseDown);
 
-    window.addEventListener('mousemove', e => {
+    function startPan(canvas, clientX) {
+        _panning = true;
+        _panCanvas = canvas;
+        _panStartX = clientX;
+        captureAnchor();
+    }
+
+    function movePan(clientX) {
         if (!_panning || !_panCanvas) return;
-        const ratio = (e.clientX - _panStartX) / _panCanvas.clientWidth;
+        const ratio = (clientX - _panStartX) / _panCanvas.clientWidth;
         for (const id of ['tempChart', 'deltaChart']) {
             const a = _anchor[id];
             if (!a) continue;
             const ch = id === 'tempChart' ? tempChart : deltaChart;
             const r = a.max - a.min;
-            const off = ratio * r;
-            applyXRange(ch, a.min - off, a.max - off);
+            applyXRange(ch, a.min - ratio * r, a.max - ratio * r);
         }
-    });
-    window.addEventListener('mouseup', () => { _panning = false; _panCanvas = null; });
+    }
+
+    function endPan() { _panning = false; _panCanvas = null; }
+
+    // --- Mouse ---
+    document.getElementById('tempChart').addEventListener('mousedown', e => startPan(e.target, e.clientX));
+    document.getElementById('deltaChart').addEventListener('mousedown', e => startPan(e.target, e.clientX));
+    window.addEventListener('mousemove', e => movePan(e.clientX));
+    window.addEventListener('mouseup', endPan);
+
+    // --- Touch ---
+    function getTouchId(canvas, touch) { return touch.target === canvas || canvas.contains(touch.target); }
+
+    for (const id of ['tempChart', 'deltaChart']) {
+        const canvas = document.getElementById(id);
+        canvas.addEventListener('touchstart', e => {
+            if (e.touches.length === 1) {
+                startPan(canvas, e.touches[0].clientX);
+            } else if (e.touches.length === 2) {
+                endPan();
+                _touches = 2;
+                _pinchDist0 = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+                captureAnchor();
+            }
+        }, { passive: true });
+
+        canvas.addEventListener('touchmove', e => {
+            if (_touches === 2 && e.touches.length === 2) {
+                e.preventDefault();
+                const dist = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+                if (_pinchDist0 > 0 && dist > 0) {
+                    const factor = _pinchDist0 / dist;
+                    const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+                    const ch = id === 'tempChart' ? tempChart : deltaChart;
+                    const ts = timeScale(ch);
+                    if (!ts) return;
+                    const rect = canvas.getBoundingClientRect();
+                    const centerMs = ts.min + (cx - rect.left) / canvas.clientWidth * (ts.max - ts.min);
+                    zoomAll(factor, centerMs);
+                    _pinchDist0 = dist;
+                }
+            } else if (_panning) {
+                movePan(e.touches[0].clientX);
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', e => {
+            if (e.touches.length === 0) { _touches = 0; endPan(); }
+        });
+    }
 
     function onWheel(e) {
         if (!e.ctrlKey) return;
