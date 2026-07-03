@@ -178,6 +178,19 @@ HTML_TEMPLATE = r"""
     select:hover { border-color: #4b5563; }
     select:focus { border-color: var(--out); }
 
+    #resetZoom {
+        padding: 8px 14px;
+        font-size: 1rem;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--surface2);
+        color: var(--text);
+        cursor: pointer;
+        transition: border-color 0.15s, color 0.15s;
+        line-height: 1;
+    }
+    #resetZoom:hover { border-color: #4b5563; color: #f9fafb; }
+
     .card {
         background: var(--surface);
         border: 1px solid var(--border);
@@ -265,6 +278,7 @@ HTML_TEMPLATE = r"""
             <option value="1m">30 Days</option>
             <option value="all">All Time</option>
         </select>
+        <button id="resetZoom" onclick="resetZoom()" title="Reset zoom">↺</button>
     </div>
 </header>
 
@@ -423,12 +437,13 @@ HTML_TEMPLATE = r"""
                         pan: {
                             enabled: true,
                             mode: 'x',
+                            modifierKey: null,
                             onPanComplete({chart}) { syncZoom(chart, chart === tempChart ? deltaChart : tempChart); },
                         },
                         zoom: {
-                            wheel: { enabled: true },
+                            wheel: { enabled: true, modifierKey: 'ctrl' },
                             pinch: { enabled: true },
-                            drag: { enabled: true, backgroundColor: 'rgba(56,189,248,0.1)', borderColor: 'rgb(56,189,248)' },
+                            drag: { enabled: true, modifierKey: 'ctrl', backgroundColor: 'rgba(56,189,248,0.1)', borderColor: 'rgb(56,189,248)' },
                             mode: 'x',
                             onZoomComplete({chart}) { syncZoom(chart, chart === tempChart ? deltaChart : tempChart); },
                         },
@@ -483,11 +498,11 @@ HTML_TEMPLATE = r"""
                             },
                         },
                         zoom: {
-                            pan: { enabled: true, mode: 'x', onPanComplete({chart}) { syncZoom(chart, tempChart); } },
+                            pan: { enabled: true, mode: 'x', modifierKey: null, onPanComplete({chart}) { syncZoom(chart, tempChart); } },
                             zoom: {
-                                wheel: { enabled: true },
+                                wheel: { enabled: true, modifierKey: 'ctrl' },
                                 pinch: { enabled: true },
-                                drag: { enabled: true, backgroundColor: 'rgba(251,191,36,0.1)', borderColor: 'rgb(251,191,36)' },
+                                drag: { enabled: true, modifierKey: 'ctrl', backgroundColor: 'rgba(251,191,36,0.1)', borderColor: 'rgb(251,191,36)' },
                                 mode: 'x',
                                 onZoomComplete({chart}) { syncZoom(chart, tempChart); },
                             },
@@ -520,6 +535,16 @@ HTML_TEMPLATE = r"""
         toChart.options.scales.x.max = s.max;
         toChart.update('none');
         _syncing = false;
+    }
+
+    function resetZoom() {
+        [tempChart, deltaChart].forEach(ch => {
+            if (!ch) return;
+            ch.resetZoom();
+            ch.options.scales.x.min = undefined;
+            ch.options.scales.x.max = undefined;
+            ch.update('none');
+        });
     }
 </script>
 </body>
