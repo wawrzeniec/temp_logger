@@ -256,6 +256,15 @@ HTML_TEMPLATE = r"""
         margin-top: 8px;
     }
 
+    #zoomBox {
+        position: fixed;
+        border: 1px dashed rgba(56, 189, 248, 0.7);
+        background: rgba(56, 189, 248, 0.08);
+        pointer-events: none;
+        display: none;
+        z-index: 1000;
+    }
+
     @media (max-width: 640px) {
         header { flex-direction: column; align-items: flex-start; }
         .chart-wrap { aspect-ratio: 1.5 / 1; }
@@ -310,6 +319,8 @@ HTML_TEMPLATE = r"""
 
 <div class="last-update" id="lastUpdate">--</div>
 
+<div id="zoomBox"></div>
+
 </div>
 
 <script>
@@ -328,15 +339,14 @@ HTML_TEMPLATE = r"""
         const alpha = color.replace(')', ', 0.15)').replace('rgb', 'rgba');
         return [
             {
-                label: label + ' Min', data: minXY,
+                label: '__min_' + label, data: minXY,
                 borderColor: 'transparent', backgroundColor: 'transparent',
                 pointRadius: 0, fill: false, tension: 0.3, order: orderBase + 2,
             },
             {
-                label: label + ' Range', data: maxXY,
+                label: '__fill_' + label, data: maxXY,
                 borderColor: 'transparent', backgroundColor: alpha,
-                pointRadius: 0, fill: {target: '-1', above: alpha, below: alpha},
-                tension: 0.3, order: orderBase + 1,
+                pointRadius: 0, fill: '-1', tension: 0.3, order: orderBase + 1,
             },
             {
                 label: label, data: meanXY,
@@ -407,7 +417,7 @@ HTML_TEMPLATE = r"""
                         labels: {
                             color: '#d1d5db', usePointStyle: true,
                             pointStyleWidth: 8, padding: 20,
-                            filter: item => !item.text.endsWith(' Min') && !item.text.endsWith(' Range'),
+                            filter: item => !item.text.startsWith('__'),
                         },
                     },
                     tooltip: {
@@ -492,10 +502,12 @@ HTML_TEMPLATE = r"""
     fetchData();
     setInterval(fetchData, 60000);
 
+    // --- Zoom & Pan ---
     let _panning = false, _panCanvas = null, _panStartX = 0;
+    let _zooming = false, _zoomCanvas = null, _zoomStartX = 0, _zoomStartY = 0;
     let _anchor = {};
-    // Touch state
     let _touches = 0, _pinchDist0 = 0;
+    const zoomBox = document.getElementById('zoomBox');
 
     function timeScale(ch) { return ch ? ch.scales.x : null; }
 
@@ -510,10 +522,9 @@ HTML_TEMPLATE = r"""
             if (!ch) continue;
             const ts = timeScale(ch);
             if (!ts) continue;
-            const range = ts.max - ts.min;
-            const r = range * factor;
-            const t = (centerMs - ts.min) / range;
-            applyXRange(ch, centerMs - r * t, centerMs + r * (1 - t));
+            const r = ts.max - ts.min;
+            const t = centerMs ? ((centerMs - ts.min) / r) : 0.5;
+            applyXRange(ch, centerMs - r * factor * t, centerMs + r * factor * (1 - t));
         }
     }
 
@@ -534,9 +545,8 @@ HTML_TEMPLATE = r"""
     }
 
     function startPan(canvas, clientX) {
-        _panning = true;
-        _panCanvas = canvas;
-        _panStartX = clientX;
+        _panning = true; _zooming = false;
+        _panCanvas = canvas; _panStartX = clientX;
         captureAnchor();
     }
 
@@ -554,22 +564,79 @@ HTML_TEMPLATE = r"""
 
     function endPan() { _panning = false; _panCanvas = null; }
 
+    function startZoom(canvas, clientX, clientY) {
+        _zooming = true; _panning = false;
+        _zoomCanvas = canvas; _zoomStartX = clientX; _zoomStartY = clientY;
+        zoomBox.style.display = 'block';
+        updateZoomBox(clientX, clientY);
+    }
+
+    function updateZoomBox(clientX, clientY) {
+        if (!_zooming) return;
+        const l = Math.min(_zoomStartX, clientX);
+        const t = Math.min(_zoomStartY, clientY);
+        const w = Math.abs(clientX - _zoomStartX);
+        const h = Math.abs(clientY - _zoomStartY);
+        zoomBox.style.left = l + 'px';
+        zoomBox.style.top = t + 'px';
+        zoomBox.style.width = w + 'px';
+        zoomBox.style.height = h + 'px';
+    }
+
+    function endZoom() {
+        if (!_zooming || !_zoomCanvas) { _zooming = false; zoomBox.style.display = 'none'; return; }
+        const rect = _zoomCanvas.getBoundingClientRect();
+        const ch = _zoomCanvas.id === 'tempChart' ? tempChart : deltaChart;
+        const ts = timeScale(ch);
+        if (!ts) { _zooming = false; zoomBox.style.display = 'none'; return; }
+        const range = ts.max - ts.min;
+        const x1 = Math.min(_zoomStartX, _zoomMouseX || _zoomStartX);
+        const x2 = Math.max(_zoomStartX, _zoomMouseX || _zoomStartX);
+        const minMs = ts.min + ((x1 - rect.left) / rect.width) * range;
+        const maxMs = ts.min + ((x2 - rect.left) / rect.width) * range;
+
+        for (const ch2 of [tempChart, deltaChart]) {
+            if (!ch2) continue;
+            const ts2 = timeScale(ch2);
+            if (!ts2) continue;
+            const r2 = ts2.max - ts2.min;
+            const t1 = (minMs - ts2.min) / r2;
+            const t2 = (maxMs - ts2.min) / r2;
+            applyXRange(ch2, ts2.min + t1 * r2, ts2.min + t2 * r2);
+        }
+        _zooming = false; zoomBox.style.display = 'none';
+    }
+
+    let _zoomMouseX = 0, _zoomMouseY = 0;
+
     // --- Mouse ---
-    document.getElementById('tempChart').addEventListener('mousedown', e => startPan(e.target, e.clientX));
-    document.getElementById('deltaChart').addEventListener('mousedown', e => startPan(e.target, e.clientX));
-    window.addEventListener('mousemove', e => movePan(e.clientX));
-    window.addEventListener('mouseup', endPan);
+    for (const id of ['tempChart', 'deltaChart']) {
+        const c = document.getElementById(id);
+        c.addEventListener('mousedown', e => {
+            if (e.ctrlKey) startZoom(e.target, e.clientX, e.clientY);
+            else startPan(e.target, e.clientX);
+        });
+    }
+
+    window.addEventListener('mousemove', e => {
+        _zoomMouseX = e.clientX; _zoomMouseY = e.clientY;
+        if (_zooming) updateZoomBox(e.clientX, e.clientY);
+        else movePan(e.clientX);
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (_zooming) endZoom();
+        endPan();
+    });
 
     // --- Touch ---
-    function getTouchId(canvas, touch) { return touch.target === canvas || canvas.contains(touch.target); }
-
     for (const id of ['tempChart', 'deltaChart']) {
         const canvas = document.getElementById(id);
         canvas.addEventListener('touchstart', e => {
             if (e.touches.length === 1) {
                 startPan(canvas, e.touches[0].clientX);
             } else if (e.touches.length === 2) {
-                endPan();
+                endPan(); endZoom();
                 _touches = 2;
                 _pinchDist0 = Math.hypot(
                     e.touches[0].clientX - e.touches[1].clientX,
@@ -607,6 +674,7 @@ HTML_TEMPLATE = r"""
         });
     }
 
+    // --- Wheel zoom (Ctrl+wheel) ---
     function onWheel(e) {
         if (!e.ctrlKey) return;
         e.preventDefault();
