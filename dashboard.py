@@ -41,44 +41,65 @@ def downsample_data(rows, max_points=500):
 
 
 def aggregate_hourly(rows):
-    """Group raw rows by outdoor_timestamp hour, returning one row per hour
-    with indoor mean/min/max and outdoor mean/max/min."""
-    groups = defaultdict(lambda: {
-        'indoor': [],
-        'outdoor_mean': [],
-        'outdoor_max': [],
-        'outdoor_min': [],
-    })
+    """Return (indoor_hourly, outdoor_hourly) — two lists of dicts with
+    their own timestamp axes, same shape as raw rows but averaged per hour."""
+    # Indoor: group by timestamp hour
+    in_groups = defaultdict(lambda: {'temps': [], 'ts': None})
+    for r in rows:
+        ts = r['timestamp']
+        key = ts[:13]  # "YYYY-MM-DD HH"
+        g = in_groups[key]
+        g['ts'] = key + ":00:00"
+        if r['temperature_c'] is not None:
+            g['temps'].append(r['temperature_c'])
+
+    indoor = []
+    for key in sorted(in_groups.keys()):
+        g = in_groups[key]
+        if g['temps']:
+            indoor.append({
+                'timestamp': g['ts'],
+                'outdoor_timestamp': None,
+                'temperature_c': sum(g['temps']) / len(g['temps']),
+                'indoor_min_c': min(g['temps']),
+                'indoor_max_c': max(g['temps']),
+                'outdoor_temp_c': None,
+                'outdoor_max_c': None,
+                'outdoor_min_c': None,
+            })
+
+    # Outdoor: group by outdoor_timestamp hour
+    out_groups = defaultdict(lambda: {'temps': [], 'maxs': [], 'mins': [], 'ts': None})
     for r in rows:
         ots = r['outdoor_timestamp']
         if not ots:
             continue
-        key = ots[:13]  # "YYYY-MM-DD HH"
-        g = groups[key]
-        g['timestamp'] = key + ":00:00"
-        if r['temperature_c'] is not None:
-            g['indoor'].append(r['temperature_c'])
+        key = ots[:13]
+        g = out_groups[key]
+        g['ts'] = key + ":00:00"
         if r['outdoor_temp_c'] is not None:
-            g['outdoor_mean'].append(r['outdoor_temp_c'])
+            g['temps'].append(r['outdoor_temp_c'])
         if r['outdoor_max_c'] is not None:
-            g['outdoor_max'].append(r['outdoor_max_c'])
+            g['maxs'].append(r['outdoor_max_c'])
         if r['outdoor_min_c'] is not None:
-            g['outdoor_min'].append(r['outdoor_min_c'])
+            g['mins'].append(r['outdoor_min_c'])
 
-    result = []
-    for key in sorted(groups.keys()):
-        g = groups[key]
-        result.append({
-            'timestamp': g['timestamp'],
-            'outdoor_timestamp': g['timestamp'],
-            'temperature_c': sum(g['indoor']) / len(g['indoor']) if g['indoor'] else None,
-            'indoor_min_c': min(g['indoor']) if g['indoor'] else None,
-            'indoor_max_c': max(g['indoor']) if g['indoor'] else None,
-            'outdoor_temp_c': sum(g['outdoor_mean']) / len(g['outdoor_mean']) if g['outdoor_mean'] else None,
-            'outdoor_max_c': max(g['outdoor_max']) if g['outdoor_max'] else None,
-            'outdoor_min_c': min(g['outdoor_min']) if g['outdoor_min'] else None,
-        })
-    return result
+    outdoor = []
+    for key in sorted(out_groups.keys()):
+        g = out_groups[key]
+        if g['temps']:
+            outdoor.append({
+                'timestamp': g['ts'],
+                'outdoor_timestamp': g['ts'],
+                'temperature_c': None,
+                'indoor_min_c': None,
+                'indoor_max_c': None,
+                'outdoor_temp_c': sum(g['temps']) / len(g['temps']),
+                'outdoor_max_c': max(g['maxs']) if g['maxs'] else None,
+                'outdoor_min_c': min(g['mins']) if g['mins'] else None,
+            })
+
+    return indoor, outdoor
 
 
 def maybe_downsample(rows, aggregation, max_points=500):
@@ -508,9 +529,14 @@ def get_data():
     indoor_max_temps = None
 
     if aggregation == 'hourly' and rows:
-        rows = aggregate_hourly(rows)
-        indoor_min_temps = [r['indoor_min_c'] for r in rows]
-        indoor_max_temps = [r['indoor_max_c'] for r in rows]
+        rows_in, rows_out = aggregate_hourly(rows)
+        # Build a unified list for stats/compat: indoor first, then outdoor
+        rows = rows_in + rows_out
+        indoor_min_temps = [r['indoor_min_c'] for r in rows_in if r['indoor_min_c'] is not None]
+        indoor_max_temps = [r['indoor_max_c'] for r in rows_in if r['indoor_max_c'] is not None]
+    else:
+        rows_in = None
+        rows_out = None
 
     if not rows:
         return jsonify({
@@ -521,49 +547,70 @@ def get_data():
             "current_in": None, "avg_in": None, "avg_out": None,
         })
 
-    downsampled = maybe_downsample(rows, aggregation, max_points=500)
+    # --- Build response arrays ---
+    if rows_in is not None and rows_out is not None:
+        # Hourly mode: indoor and outdoor have their own timestamp axes
+        in_ds = maybe_downsample(rows_in, 'raw', max_points=250)
+        out_ds = maybe_downsample(rows_out, 'raw', max_points=250)
 
-    timestamps = [r['timestamp'].split(' ')[1][:5] for r in downsampled]
-    indoor_temps = [r['temperature_c'] for r in downsampled]
-    outdoor_temps = [r['outdoor_temp_c'] for r in downsampled]
-    outdoor_max_temps = [r['outdoor_max_c'] for r in downsampled]
-    outdoor_min_temps = [r['outdoor_min_c'] for r in downsampled]
-    outdoor_timestamps = [
-        r['outdoor_timestamp'].split(' ')[1][:5] if r['outdoor_timestamp'] else None
-        for r in downsampled
-    ]
+        timestamps = [r['timestamp'].split(' ')[1][:5] for r in in_ds]
+        indoor_temps = [r['temperature_c'] for r in in_ds]
+        indoor_min_temps = [r['indoor_min_c'] for r in in_ds]
+        indoor_max_temps = [r['indoor_max_c'] for r in in_ds]
 
-    if aggregation == 'hourly' and indoor_min_temps and indoor_max_temps:
-        max_pts = 500
-        if len(indoor_min_temps) > max_pts:
-            step = len(indoor_min_temps) // max_pts
-            indoor_min_temps = indoor_min_temps[::step]
-            indoor_max_temps = indoor_max_temps[::step]
-    elif aggregation != 'hourly':
+        outdoor_temps = [r['outdoor_temp_c'] for r in out_ds]
+        outdoor_max_temps = [r['outdoor_max_c'] for r in out_ds]
+        outdoor_min_temps = [r['outdoor_min_c'] for r in out_ds]
+        outdoor_timestamps = [
+            r['timestamp'].split(' ')[1][:5] if r['timestamp'] else None
+            for r in out_ds
+        ]
+
+        # Delta: match each indoor hour against an outdoor hour at the same HH
+        out_lookup = {
+            r['timestamp'].split(' ')[1][:5]: r['outdoor_temp_c']
+            for r in rows_out if r['outdoor_temp_c'] is not None
+        }
+        deltas = []
+        for r in in_ds:
+            key = r['timestamp'].split(' ')[1][:5]
+            out_val = out_lookup.get(key)
+            if r['temperature_c'] is not None and out_val is not None:
+                deltas.append(r['temperature_c'] - out_val)
+            else:
+                deltas.append(None)
+    else:
+        # Raw mode
+        downsampled = maybe_downsample(rows, aggregation, max_points=500)
+
+        timestamps = [r['timestamp'].split(' ')[1][:5] for r in downsampled]
+        indoor_temps = [r['temperature_c'] for r in downsampled]
+        outdoor_temps = [r['outdoor_temp_c'] for r in downsampled]
+        outdoor_max_temps = [r['outdoor_max_c'] for r in downsampled]
+        outdoor_min_temps = [r['outdoor_min_c'] for r in downsampled]
+        outdoor_timestamps = [
+            r['outdoor_timestamp'].split(' ')[1][:5] if r['outdoor_timestamp'] else None
+            for r in downsampled
+        ]
         indoor_min_temps = []
         indoor_max_temps = []
 
-    # --- Deltas ---
-    # Delta only exists where indoor(timestamp) and outdoor(outdoor_timestamp)
-    # share the same HH:MM. outdoor data for time X only appears once a row
-    # with outdoor_timestamp=X has been logged (~2h after X).
-    # Build a lookup: HH:MM → outdoor_temp_c from all raw rows.
-    outdoor_by_ts = {}
-    for r in rows:
-        ots = r['outdoor_timestamp']
-        if ots and r['outdoor_temp_c'] is not None:
-            key = ots.split(' ')[1][:5] if ' ' in ots else ots[:5]
-            # Keep the latest value per key (rows are ordered by timestamp ASC)
-            outdoor_by_ts[key] = r['outdoor_temp_c']
+        # Build outdoor lookup from raw rows for delta
+        outdoor_by_ts = {}
+        for r in rows:
+            ots = r['outdoor_timestamp']
+            if ots and r['outdoor_temp_c'] is not None:
+                key = ots.split(' ')[1][:5] if ' ' in ots else ots[:5]
+                outdoor_by_ts[key] = r['outdoor_temp_c']
 
-    deltas = []
-    for r in downsampled:
-        ts = r['timestamp'].split(' ')[1][:5]
-        out_val = outdoor_by_ts.get(ts)
-        if r['temperature_c'] is not None and out_val is not None:
-            deltas.append(r['temperature_c'] - out_val)
-        else:
-            deltas.append(None)
+        deltas = []
+        for r in downsampled:
+            ts = r['timestamp'].split(' ')[1][:5]
+            out_val = outdoor_by_ts.get(ts)
+            if r['temperature_c'] is not None and out_val is not None:
+                deltas.append(r['temperature_c'] - out_val)
+            else:
+                deltas.append(None)
 
     all_in = [r['temperature_c'] for r in rows if r['temperature_c'] is not None]
     all_out = [r['outdoor_temp_c'] for r in rows if r['outdoor_temp_c'] is not None]
