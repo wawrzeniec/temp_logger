@@ -346,8 +346,9 @@ HTML_TEMPLATE = r"""
             {
                 label: '__fill_' + label, data: maxXY,
                 borderColor: 'transparent', backgroundColor: alpha,
-                pointRadius: 0, fill: {target: {value: -1}, above: alpha, below: alpha},
+                pointRadius: 0, fill: {target: '-1', above: alpha, below: alpha},
                 tension: 0.3, order: orderBase + 1,
+            },
             },
             {
                 label: label, data: meanXY,
