@@ -378,7 +378,7 @@ HTML_TEMPLATE = r"""
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                interaction: { mode: 'index', intersect: false },
+                interaction: { mode: 'x', intersect: false },
                 plugins: {
                     legend: {
                         labels: {
@@ -436,7 +436,7 @@ HTML_TEMPLATE = r"""
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                interaction: { mode: 'index', intersect: false },
+                interaction: { mode: 'x', intersect: false },
                 plugins: {
                     legend: { labels: { color: '#d1d5db', usePointStyle: true, padding: 20 } },
                     tooltip: {
