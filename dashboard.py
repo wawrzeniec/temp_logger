@@ -7,21 +7,21 @@ import os
 app = Flask(__name__)
 DB_PATH = os.path.expanduser('~/temp_logger/data/temperature.db')
 
+
 def get_db_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
+
 def downsample_data(rows, max_points=500):
     """Downsample raw rows by averaging in chunks."""
     if len(rows) <= max_points:
         return rows
-
     step = len(rows) // max_points
     downsampled = []
-
     for i in range(0, len(rows), step):
-        chunk = rows[i:i + step]
+        chunk = rows[i : i + step]
         if not chunk:
             continue
 
@@ -31,11 +31,11 @@ def downsample_data(rows, max_points=500):
 
         downsampled.append({
             'timestamp': chunk[0]['timestamp'],
+            'outdoor_timestamp': chunk[0]['outdoor_timestamp'],
             'temperature_c': avg('temperature_c'),
             'outdoor_temp_c': avg('outdoor_temp_c'),
             'outdoor_max_c': avg('outdoor_max_c'),
             'outdoor_min_c': avg('outdoor_min_c'),
-            'outdoor_timestamp': chunk[0]['outdoor_timestamp'],
         })
     return downsampled
 
@@ -48,9 +48,7 @@ def aggregate_hourly(rows):
         'outdoor_mean': [],
         'outdoor_max': [],
         'outdoor_min': [],
-        'timestamp': None,
     })
-
     for r in rows:
         ots = r['outdoor_timestamp']
         if not ots:
@@ -72,19 +70,18 @@ def aggregate_hourly(rows):
         g = groups[key]
         result.append({
             'timestamp': g['timestamp'],
+            'outdoor_timestamp': g['timestamp'],
             'temperature_c': sum(g['indoor']) / len(g['indoor']) if g['indoor'] else None,
             'indoor_min_c': min(g['indoor']) if g['indoor'] else None,
             'indoor_max_c': max(g['indoor']) if g['indoor'] else None,
             'outdoor_temp_c': sum(g['outdoor_mean']) / len(g['outdoor_mean']) if g['outdoor_mean'] else None,
             'outdoor_max_c': max(g['outdoor_max']) if g['outdoor_max'] else None,
             'outdoor_min_c': min(g['outdoor_min']) if g['outdoor_min'] else None,
-            'outdoor_timestamp': g['timestamp'],
         })
     return result
 
 
 def maybe_downsample(rows, aggregation, max_points=500):
-    """Downsample raw rows, or trim hourly rows if too many."""
     if aggregation == 'hourly':
         if len(rows) > max_points:
             step = len(rows) // max_points
@@ -111,8 +108,6 @@ HTML_TEMPLATE = r"""
         --in: #34d399;
         --out: #38bdf8;
         --delta: #fbbf24;
-        --out-max: #f87171;
-        --out-min: #60a5fa;
         --border: #2d3148;
     }
 
@@ -142,13 +137,10 @@ HTML_TEMPLATE = r"""
         letter-spacing: -0.02em;
         color: #f9fafb;
     }
-    header h1 span { color: var(--in); }
+    header h1 span.in { color: var(--in); }
+    header h1 span.out { color: var(--out); }
 
-    .controls {
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-    }
+    .controls { display: flex; gap: 10px; flex-wrap: wrap; }
 
     select {
         padding: 8px 14px;
@@ -164,44 +156,6 @@ HTML_TEMPLATE = r"""
     select:hover { border-color: #4b5563; }
     select:focus { border-color: var(--out); }
 
-    .grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-        gap: 12px;
-        margin-bottom: 24px;
-    }
-
-    .stat {
-        background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        padding: 16px;
-        text-align: center;
-    }
-    .stat-label {
-        font-size: 0.75rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        color: var(--muted);
-        margin-bottom: 6px;
-    }
-    .stat-value {
-        font-size: 1.35rem;
-        font-weight: 700;
-        font-variant-numeric: tabular-nums;
-    }
-    .stat-sub {
-        font-size: 0.75rem;
-        color: var(--muted);
-        margin-top: 2px;
-    }
-    .c-in  { color: var(--in); }
-    .c-out { color: var(--out); }
-    .c-delta { color: var(--delta); }
-    .c-max { color: var(--out-max); }
-    .c-min { color: var(--out-min); }
-
     .card {
         background: var(--surface);
         border: 1px solid var(--border);
@@ -215,6 +169,42 @@ HTML_TEMPLATE = r"""
         margin-bottom: 16px;
         color: #f3f4f6;
     }
+
+    .stat-row {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 24px;
+        margin-bottom: 20px;
+        flex-wrap: wrap;
+    }
+    .stat {
+        background: var(--surface2);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 12px 20px;
+        text-align: center;
+    }
+    .stat-label {
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--muted);
+        margin-bottom: 4px;
+    }
+    .stat-value {
+        font-size: 1.4rem;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+    }
+    .stat-sub {
+        font-size: 0.7rem;
+        color: var(--muted);
+        margin-top: 2px;
+    }
+    .c-in { color: var(--in); }
+    .c-out { color: var(--out); }
 
     .chart-wrap {
         position: relative;
@@ -233,8 +223,6 @@ HTML_TEMPLATE = r"""
     @media (max-width: 640px) {
         header { flex-direction: column; align-items: flex-start; }
         .chart-wrap { aspect-ratio: 1.5 / 1; }
-        .stat { padding: 12px 10px; }
-        .stat-value { font-size: 1.15rem; }
     }
 </style>
 </head>
@@ -242,14 +230,12 @@ HTML_TEMPLATE = r"""
 <div class="wrap">
 
 <header>
-    <h1>🌡️ <span>Indoor</span> vs <span style="color:var(--out)">Outdoor</span></h1>
+    <h1>🌡️ <span class="in">Indoor</span> vs <span class="out">Outdoor</span></h1>
     <div class="controls">
-        <label for="aggSelect" style="display:none">View</label>
         <select id="aggSelect" onchange="fetchData()">
             <option value="raw">Raw (5 min)</option>
             <option value="hourly">Hourly Avg</option>
         </select>
-        <label for="timeRange" style="display:none">Range</label>
         <select id="timeRange" onchange="fetchData()">
             <option value="1d">24 Hours</option>
             <option value="2d">48 Hours</option>
@@ -260,15 +246,19 @@ HTML_TEMPLATE = r"""
     </div>
 </header>
 
-<div class="grid">
-    <div class="stat"><div class="stat-label">Indoor</div><div class="stat-value c-in"  id="currentIn">--</div><div class="stat-sub" id="rangeIn"></div></div>
-    <div class="stat"><div class="stat-label">Outdoor</div><div class="stat-value c-out" id="currentOut">--</div><div class="stat-sub" id="rangeOut"></div></div>
-    <div class="stat"><div class="stat-label">Δ Indoor−Outdoor</div><div class="stat-value c-delta" id="deltaTemp">--</div></div>
-    <div class="stat"><div class="stat-label">Indoor Hour Max</div><div class="stat-value c-in" id="hourMaxIn">--</div></div>
-    <div class="stat"><div class="stat-label">Indoor Hour Min</div><div class="stat-value c-in" id="hourMinIn">--</div></div>
-    <div class="stat"><div class="stat-label">Outdoor Hour Max</div><div class="stat-value c-max" id="currentOutMax">--</div></div>
-    <div class="stat"><div class="stat-label">Outdoor Hour Min</div><div class="stat-value c-min" id="currentOutMin">--</div></div>
-    <div class="stat"><div class="stat-label">Outdoor Ref</div><div class="stat-value c-out" id="outdoorRefTime">--</div></div>
+<div class="stat-row">
+    <div class="stat">
+        <div class="stat-label">Current Indoor</div>
+        <div class="stat-value c-in" id="currentIn">--</div>
+    </div>
+    <div class="stat">
+        <div class="stat-label">Avg Indoor</div>
+        <div class="stat-value c-in" id="avgIn">--</div>
+    </div>
+    <div class="stat">
+        <div class="stat-label">Avg Outdoor</div>
+        <div class="stat-value c-out" id="avgOut">--</div>
+    </div>
 </div>
 
 <div class="card">
@@ -276,7 +266,7 @@ HTML_TEMPLATE = r"""
     <div class="chart-wrap"><canvas id="tempChart"></canvas></div>
 </div>
 
-<div class="card">
+<div class="card" id="deltaCard">
     <h2>Delta (Indoor − Outdoor)</h2>
     <div class="chart-wrap"><canvas id="deltaChart"></canvas></div>
 </div>
@@ -290,43 +280,26 @@ HTML_TEMPLATE = r"""
     let deltaChart = null;
 
     const getRangeMinutes = r => ({'1d':1440,'2d':2880,'1w':10080,'1m':43200,'all':null})[r];
-
     const fmtTemp = v => v != null ? v.toFixed(1) + '\u00b0C' : '--';
-    const fmtDelta = v => v != null ? ((v>=0?'+':'')+v.toFixed(1)+'\u00b0C') : '--';
 
     function buildFillDatasets(label, meanData, minData, maxData, color, orderBase) {
         const alpha = color.replace(')', ', 0.15)').replace('rgb', 'rgba');
         return [
             {
-                label: label + ' Min',
-                data: minData,
-                borderColor: 'transparent',
-                backgroundColor: 'transparent',
-                pointRadius: 0,
-                fill: false,
-                tension: 0.3,
-                order: orderBase + 2,
+                label: label + ' Min', data: minData,
+                borderColor: 'transparent', backgroundColor: 'transparent',
+                pointRadius: 0, fill: false, tension: 0.3, order: orderBase + 2,
             },
             {
-                label: label + ' Range',
-                data: maxData,
-                borderColor: 'transparent',
-                backgroundColor: alpha,
-                pointRadius: 0,
-                fill: {target: '-1', above: alpha, below: alpha},
-                tension: 0.3,
-                order: orderBase + 1,
+                label: label + ' Range', data: maxData,
+                borderColor: 'transparent', backgroundColor: alpha,
+                pointRadius: 0, fill: {target: '-1', above: alpha, below: alpha},
+                tension: 0.3, order: orderBase + 1,
             },
             {
-                label: label,
-                data: meanData,
-                borderColor: color,
-                backgroundColor: 'transparent',
-                pointRadius: 0,
-                borderWidth: 2.5,
-                fill: false,
-                tension: 0.3,
-                order: orderBase,
+                label: label, data: meanData,
+                borderColor: color, backgroundColor: 'transparent',
+                pointRadius: 0, borderWidth: 2.5, fill: false, tension: 0.3, order: orderBase,
             },
         ];
     }
@@ -342,80 +315,69 @@ HTML_TEMPLATE = r"""
         const data = await resp.json();
         if (data.error) return;
 
+        // --- Stats ---
         document.getElementById('currentIn').textContent = fmtTemp(data.current_in);
-        document.getElementById('currentOut').textContent = fmtTemp(data.current_out);
-        document.getElementById('currentOutMax').textContent = fmtTemp(data.current_out_max);
-        document.getElementById('currentOutMin').textContent = fmtTemp(data.current_out_min);
-        document.getElementById('outdoorRefTime').textContent = data.outdoor_ref_time || '--';
-        document.getElementById('deltaTemp').textContent = fmtDelta(data.current_delta);
-
-        const iminA = data.indoor_min_temps;
-        const imaxA = data.indoor_max_temps;
-        const inMinNow = iminA && iminA.length ? iminA[iminA.length-1] : null;
-        const inMaxNow = imaxA && imaxA.length ? imaxA[imaxA.length-1] : null;
-        document.getElementById('hourMaxIn').textContent = fmtTemp(inMaxNow);
-        document.getElementById('hourMinIn').textContent = fmtTemp(inMinNow);
-
-        if (data.min_in != null && data.max_in != null)
-            document.getElementById('rangeIn').textContent = data.min_in.toFixed(1) + ' \u2013 ' + data.max_in.toFixed(1) + '\u00b0C';
-        else document.getElementById('rangeIn').textContent = '';
-        if (data.min_out != null && data.max_out != null)
-            document.getElementById('rangeOut').textContent = data.min_out.toFixed(1) + ' \u2013 ' + data.max_out.toFixed(1) + '\u00b0C';
-        else document.getElementById('rangeOut').textContent = '';
-
+        document.getElementById('avgIn').textContent = fmtTemp(data.avg_in);
+        document.getElementById('avgOut').textContent = fmtTemp(data.avg_out);
         document.getElementById('lastUpdate').textContent = 'Updated ' + new Date().toLocaleTimeString();
 
-        const labels = data.timestamps;
-        const showDots = labels.length <= 120;
+        const showDots = data.timestamps.length <= 120;
+        const isHourly = agg === 'hourly';
+
+        // --- Temp Chart ---
+        // In raw mode, outdoor data uses its own timestamp (2h behind) as x,
+        // so the outdoor line is visually shifted left vs indoor.
+        // In hourly mode, both share the same hourly bucket labels.
+        const indoorData = data.timestamps.map((ts, i) => ({
+            x: ts, y: data.indoor_temps[i],
+        }));
+
+        const outdoorX = isHourly ? data.timestamps : data.outdoor_timestamps;
+        const outdoorData = outdoorX.map((ts, i) => ({
+            x: ts, y: data.outdoor_temps[i],
+        }));
+        const outdoorMaxData = outdoorX.map((ts, i) => ({
+            x: ts, y: data.outdoor_max_temps[i],
+        }));
+        const outdoorMinData = outdoorX.map((ts, i) => ({
+            x: ts, y: data.outdoor_min_temps[i],
+        }));
 
         if (tempChart) tempChart.destroy();
         const ctx1 = document.getElementById('tempChart').getContext('2d');
         const datasets = [];
 
-        const hasIndoorBand = data.indoor_min_temps && data.indoor_max_temps && data.indoor_min_temps.length;
-        if (hasIndoorBand) {
+        if (isHourly && data.indoor_min_temps && data.indoor_min_temps.length) {
+            const indoorMinData = data.timestamps.map((ts, i) => ({
+                x: ts, y: data.indoor_min_temps[i],
+            }));
+            const indoorMaxData = data.timestamps.map((ts, i) => ({
+                x: ts, y: data.indoor_max_temps[i],
+            }));
             datasets.push(...buildFillDatasets(
-                'Indoor', data.indoor_temps, data.indoor_min_temps, data.indoor_max_temps,
+                'Indoor', indoorData, indoorMinData, indoorMaxData,
                 'rgb(52, 211, 153)', 1
             ));
-            datasets[datasets.length-1].pointRadius = showDots ? 1.5 : 0;
+            datasets[datasets.length - 1].pointRadius = showDots ? 1.5 : 0;
         } else {
             datasets.push({
-                label: 'Indoor',
-                data: data.indoor_temps,
+                label: 'Indoor', data: indoorData,
                 borderColor: 'rgb(52, 211, 153)',
                 backgroundColor: 'rgba(52, 211, 153, 0.08)',
                 fill: { target: { value: -100 }, above: 'rgba(52, 211, 153, 0.08)' },
-                tension: 0.3,
-                pointRadius: showDots ? 1.5 : 0,
-                borderWidth: 2.5,
-                order: 1,
+                tension: 0.3, pointRadius: showDots ? 1.5 : 0, borderWidth: 2.5, order: 1,
             });
         }
 
-        const hasOutdoorBand = data.outdoor_min_temps && data.outdoor_max_temps && data.outdoor_min_temps.length;
-        if (hasOutdoorBand) {
-            datasets.push(...buildFillDatasets(
-                'Outdoor', data.outdoor_temps, data.outdoor_min_temps, data.outdoor_max_temps,
-                'rgb(56, 189, 248)', 4
-            ));
-            datasets[datasets.length-1].pointRadius = showDots ? 1.5 : 0;
-        } else {
-            datasets.push({
-                label: 'Outdoor',
-                data: data.outdoor_temps,
-                borderColor: 'rgb(56, 189, 248)',
-                tension: 0.3,
-                pointRadius: showDots ? 1.5 : 0,
-                borderWidth: 2.5,
-                fill: false,
-                order: 4,
-            });
-        }
+        data.outdoor_temps.some(v => v != null) && datasets.push(...buildFillDatasets(
+            'Outdoor', outdoorData, outdoorMinData, outdoorMaxData,
+            'rgb(56, 189, 248)', 4
+        ));
+        datasets[datasets.length - 1].pointRadius = showDots ? 1.5 : 0;
 
         tempChart = new Chart(ctx1, {
             type: 'line',
-            data: { labels, datasets },
+            data: { datasets },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
@@ -423,23 +385,19 @@ HTML_TEMPLATE = r"""
                 plugins: {
                     legend: {
                         labels: {
-                            color: '#d1d5db',
-                            usePointStyle: true,
-                            pointStyleWidth: 8,
-                            padding: 20,
+                            color: '#d1d5db', usePointStyle: true,
+                            pointStyleWidth: 8, padding: 20,
                             filter: item => !item.text.endsWith(' Min') && !item.text.endsWith(' Range'),
                         },
                     },
                     tooltip: {
-                        backgroundColor: '#1a1d27',
-                        borderColor: '#2d3148',
-                        borderWidth: 1,
-                        titleColor: '#d1d5db',
-                        bodyColor: '#d1d5db',
+                        backgroundColor: '#1a1d27', borderColor: '#2d3148', borderWidth: 1,
+                        titleColor: '#d1d5db', bodyColor: '#d1d5db',
                         callbacks: {
                             label(ctx) {
                                 const lbl = ctx.dataset.label || '';
                                 if (lbl.endsWith(' Min') || lbl.endsWith(' Range')) return null;
+                                if (ctx.parsed.x) return lbl + ': ' + ctx.parsed.y.toFixed(1) + '\u00b0C (at ' + ctx.parsed.x + ')';
                                 return lbl + ': ' + (ctx.parsed.y != null ? ctx.parsed.y.toFixed(1) + '\u00b0C' : 'N/A');
                             },
                         },
@@ -458,56 +416,60 @@ HTML_TEMPLATE = r"""
             },
         });
 
-        if (deltaChart) deltaChart.destroy();
-        const ctx2 = document.getElementById('deltaChart').getContext('2d');
+        // --- Delta Chart (hourly only — raw mode data isn't aligned) ---
+        const deltaCard = document.getElementById('deltaCard');
+        if (deltaChart) { deltaChart.destroy(); deltaChart = null; }
 
-        deltaChart = new Chart(ctx2, {
-            type: 'line',
-            data: {
-                labels,
-                datasets: [{
-                    label: '\u0394 Indoor \u2212 Outdoor',
-                    data: data.deltas,
-                    borderColor: 'rgb(251, 191, 36)',
-                    backgroundColor: 'rgba(251, 191, 36, 0.12)',
-                    fill: true,
-                    tension: 0.3,
-                    pointRadius: showDots ? 1.5 : 0,
-                    borderWidth: 2,
-                }],
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: { mode: 'index', intersect: false },
-                plugins: {
-                    legend: { labels: { color: '#d1d5db', usePointStyle: true, padding: 20 } },
-                    tooltip: {
-                        backgroundColor: '#1a1d27',
-                        borderColor: '#2d3148',
-                        borderWidth: 1,
-                        titleColor: '#d1d5db',
-                        bodyColor: '#d1d5db',
-                        callbacks: {
-                            label(ctx) {
-                                const v = ctx.parsed.y;
-                                return v != null ? ('\u0394: ' + (v>=0?'+':'') + v.toFixed(1) + '\u00b0C') : '\u0394: N/A';
+        if (!isHourly) {
+            deltaCard.style.display = 'none';
+        } else {
+            deltaCard.style.display = '';
+            const ctx2 = document.getElementById('deltaChart').getContext('2d');
+            const deltaData = data.timestamps.map((ts, i) => ({
+                x: ts, y: data.deltas[i],
+            }));
+            deltaChart = new Chart(ctx2, {
+                type: 'line',
+                data: {
+                    datasets: [{
+                        label: '\u0394 Indoor \u2212 Outdoor',
+                        data: deltaData,
+                        borderColor: 'rgb(251, 191, 36)',
+                        backgroundColor: 'rgba(251, 191, 36, 0.12)',
+                        fill: true, tension: 0.3,
+                        pointRadius: showDots ? 1.5 : 0, borderWidth: 2,
+                    }],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { labels: { color: '#d1d5db', usePointStyle: true, padding: 20 } },
+                        tooltip: {
+                            backgroundColor: '#1a1d27', borderColor: '#2d3148', borderWidth: 1,
+                            titleColor: '#d1d5db', bodyColor: '#d1d5db',
+                            callbacks: {
+                                label(ctx) {
+                                    const v = ctx.parsed.y;
+                                    return v != null ? ('\u0394: ' + (v>=0?'+':'') + v.toFixed(1) + '\u00b0C') : '\u0394: N/A';
+                                },
                             },
                         },
                     },
-                },
-                scales: {
-                    x: {
-                        ticks: { color: '#6b7280', maxTicksLimit: 10, maxRotation: 45, minRotation: 0 },
-                        grid: { color: '#1f2937' },
+                    scales: {
+                        x: {
+                            ticks: { color: '#6b7280', maxTicksLimit: 10, maxRotation: 45, minRotation: 0 },
+                            grid: { color: '#1f2937' },
+                        },
+                        y: {
+                            ticks: { color: '#6b7280', callback: v => (v>=0?'+':'') + v + '\u00b0C' },
+                            grid: { color: '#1f2937' },
+                        },
                     },
-                    y: {
-                        ticks: { color: '#6b7280', callback: v => (v>=0?'+':'') + v + '\u00b0C' },
-                        grid: { color: '#1f2937' },
-                    },
                 },
-            },
-        });
+            });
+        }
     }
 
     fetchData();
@@ -563,12 +525,7 @@ def get_data():
             "outdoor_max_temps": [], "outdoor_min_temps": [],
             "indoor_min_temps": [], "indoor_max_temps": [],
             "outdoor_timestamps": [], "deltas": [],
-            "current_in": None, "current_out": None,
-            "current_out_max": None, "current_out_min": None,
-            "outdoor_ref_time": None, "current_delta": None,
-            "min_in": None, "max_in": None,
-            "min_out": None, "max_out": None,
-            "min_out_range": None, "max_out_range": None,
+            "current_in": None, "avg_in": None, "avg_out": None,
         })
 
     downsampled = maybe_downsample(rows, aggregation, max_points=500)
@@ -602,18 +559,9 @@ def get_data():
 
     all_in = [r['temperature_c'] for r in rows if r['temperature_c'] is not None]
     all_out = [r['outdoor_temp_c'] for r in rows if r['outdoor_temp_c'] is not None]
-    all_out_max = [r['outdoor_max_c'] for r in rows if r['outdoor_max_c'] is not None]
-    all_out_min = [r['outdoor_min_c'] for r in rows if r['outdoor_min_c'] is not None]
 
-    current_delta = None
-    if all_in and all_out:
-        current_delta = all_in[-1] - all_out[-1]
-
-    outdoor_ref_time = None
-    for r in reversed(rows):
-        if r['outdoor_timestamp']:
-            outdoor_ref_time = r['outdoor_timestamp'].split(' ')[1][:5]
-            break
+    avg_in = sum(all_in) / len(all_in) if all_in else None
+    avg_out = sum(all_out) / len(all_out) if all_out else None
 
     return jsonify({
         "timestamps": timestamps,
@@ -626,17 +574,8 @@ def get_data():
         "outdoor_timestamps": outdoor_timestamps,
         "deltas": deltas,
         "current_in": all_in[-1] if all_in else None,
-        "current_out": all_out[-1] if all_out else None,
-        "current_out_max": all_out_max[-1] if all_out_max else None,
-        "current_out_min": all_out_min[-1] if all_out_min else None,
-        "outdoor_ref_time": outdoor_ref_time,
-        "current_delta": current_delta,
-        "min_in": min(all_in) if all_in else None,
-        "max_in": max(all_in) if all_in else None,
-        "min_out": min(all_out) if all_out else None,
-        "max_out": max(all_out) if all_out else None,
-        "min_out_range": min(all_out_min) if all_out_min else None,
-        "max_out_range": max(all_out_max) if all_out_max else None,
+        "avg_in": avg_in,
+        "avg_out": avg_out,
     })
 
 
