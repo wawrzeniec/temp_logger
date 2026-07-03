@@ -121,7 +121,6 @@ HTML_TEMPLATE = r"""
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/date-fns@3.6.0/cdn.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
 <style>
     :root {
         --bg: #0f1117;
@@ -422,19 +421,6 @@ HTML_TEMPLATE = r"""
                             },
                         },
                     },
-                    zoom: {
-                        pan: {
-                            enabled: true,
-                            mode: 'x',
-                            onPanComplete({chart}) { syncZoom(chart, chart === tempChart ? deltaChart : tempChart); },
-                        },
-                        zoom: {
-                            wheel: { enabled: true },
-                            pinch: { enabled: true },
-                            mode: 'x',
-                            onZoomComplete({chart}) { syncZoom(chart, chart === tempChart ? deltaChart : tempChart); },
-                        },
-                    },
                 },
                 scales: {
                     x: {
@@ -444,7 +430,7 @@ HTML_TEMPLATE = r"""
                         grid: { color: '#1f2937' },
                     },
                     y: {
-                        ticks: { color: '#6b7280', callback: v => v + '\u00b0C' },
+                        ticks: { color: '#6b7280', callback: v => (v != null ? v.toFixed(1) + '\u00b0C' : '') },
                         grid: { color: '#1f2937' },
                     },
                 },
@@ -485,15 +471,6 @@ HTML_TEMPLATE = r"""
                             },
                         },
                     },
-                    zoom: {
-                        pan: { enabled: true, mode: 'x', onPanComplete({chart}) { syncZoom(chart, tempChart); } },
-                        zoom: {
-                            wheel: { enabled: true },
-                            pinch: { enabled: true },
-                            mode: 'x',
-                            onZoomComplete({chart}) { syncZoom(chart, tempChart); },
-                        },
-                    },
                 },
                 scales: {
                     x: {
@@ -503,7 +480,7 @@ HTML_TEMPLATE = r"""
                         grid: { color: '#1f2937' },
                     },
                     y: {
-                        ticks: { color: '#6b7280', callback: v => (v>=0?'+':'') + v + '\u00b0C' },
+                        ticks: { color: '#6b7280', callback: v => (v != null ? (v>=0?'+':'') + v.toFixed(1) + '\u00b0C' : '') },
                         grid: { color: '#1f2937' },
                     },
                 },
@@ -514,28 +491,77 @@ HTML_TEMPLATE = r"""
     fetchData();
     setInterval(fetchData, 60000);
 
-    let _syncing = false;
-    function syncZoom(fromChart, toChart) {
-        if (_syncing) return;
-        _syncing = true;
-        const s = fromChart.scales.x;
-        toChart.options.scales.x.min = s.min;
-        toChart.options.scales.x.max = s.max;
-        toChart.update('none');
-        _syncing = false;
+    let _panning = false, _panCanvas = null, _panStartX = 0;
+    let _anchor = {}; // { id: { min, max } } captured at mousedown
+
+    function timeScale(ch) { return ch ? ch.scales.x : null; }
+
+    function applyXRange(ch, min, max) {
+        ch.options.scales.x.min = min;
+        ch.options.scales.x.max = max;
+        ch.update('none');
+    }
+
+    function zoomAll(factor, centerMs) {
+        for (const ch of [tempChart, deltaChart]) {
+            if (!ch) continue;
+            const ts = timeScale(ch);
+            if (!ts) continue;
+            const range = ts.max - ts.min;
+            const r = range * factor;
+            const t = (centerMs - ts.min) / range;
+            applyXRange(ch, centerMs - r * t, centerMs + r * (1 - t));
+        }
     }
 
     function resetZoom() {
-        [tempChart, deltaChart].forEach(ch => {
-            if (!ch) return;
-            ch.resetZoom();
-            ch.options.scales.x.min = undefined;
-            ch.options.scales.x.max = undefined;
-            ch.update('none');
-        });
+        for (const ch of [tempChart, deltaChart]) {
+            if (!ch) continue;
+            applyXRange(ch, undefined, undefined);
+        }
     }
 
-    // Double-click any chart to reset zoom
+    function onMouseDown(e) {
+        _panning = true;
+        _panCanvas = e.target;
+        _panStartX = e.clientX;
+        _anchor = {};
+        for (const id of ['tempChart', 'deltaChart']) {
+            const ch = id === 'tempChart' ? tempChart : deltaChart;
+            const ts = timeScale(ch);
+            if (ts) _anchor[id] = { min: ts.min, max: ts.max };
+        }
+    }
+    document.getElementById('tempChart').addEventListener('mousedown', onMouseDown);
+    document.getElementById('deltaChart').addEventListener('mousedown', onMouseDown);
+
+    window.addEventListener('mousemove', e => {
+        if (!_panning || !_panCanvas) return;
+        const ratio = (e.clientX - _panStartX) / _panCanvas.clientWidth;
+        for (const id of ['tempChart', 'deltaChart']) {
+            const a = _anchor[id];
+            if (!a) continue;
+            const ch = id === 'tempChart' ? tempChart : deltaChart;
+            const r = a.max - a.min;
+            const off = ratio * r;
+            applyXRange(ch, a.min - off, a.max - off);
+        }
+    });
+    window.addEventListener('mouseup', () => { _panning = false; _panCanvas = null; });
+
+    function onWheel(e) {
+        if (!e.ctrlKey) return;
+        e.preventDefault();
+        const canvas = e.target;
+        const ch = canvas.id === 'tempChart' ? tempChart : deltaChart;
+        const ts = timeScale(ch);
+        if (!ts) return;
+        const rect = canvas.getBoundingClientRect();
+        const cx = ts.min + (e.clientX - rect.left) / canvas.clientWidth * (ts.max - ts.min);
+        zoomAll(e.deltaY < 0 ? 0.7 : 1.3, cx);
+    }
+    document.getElementById('tempChart').addEventListener('wheel', onWheel, { passive: false });
+    document.getElementById('deltaChart').addEventListener('wheel', onWheel, { passive: false });
     document.getElementById('tempChart').addEventListener('dblclick', resetZoom);
     document.getElementById('deltaChart').addEventListener('dblclick', resetZoom);
 </script>
