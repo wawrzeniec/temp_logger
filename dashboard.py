@@ -418,53 +418,55 @@ HTML_TEMPLATE = r"""
         if (deltaChart) deltaChart.destroy();
         const ctx2 = document.getElementById('deltaChart').getContext('2d');
 
-        // Delta is plotted at indoor timestamp
-        const deltaXY = indoorX.map((x, i) => ({x, y: data.deltas[i]}));
+        // In raw mode deltas are grouped by outdoor_timestamp hour;
+        // in hourly mode they're per bucket. Use dedicated delta_timestamps.
+        const deltaX = (data.delta_timestamps || data.timestamps).map(hmToMins);
+        const deltaXY = deltaX.map((x, i) => ({x, y: data.deltas[i]}));
 
         deltaChart = new Chart(ctx2, {
-            type: 'line',
-            data: {
-                datasets: [{
-                    label: '\u0394 Indoor \u2212 Outdoor',
-                    data: deltaXY,
-                    borderColor: 'rgb(251, 191, 36)',
-                    backgroundColor: 'rgba(251, 191, 36, 0.12)',
-                    fill: true, tension: 0.3,
-                    pointRadius: showDots ? 1.5 : 0, borderWidth: 2,
-                }],
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: { mode: 'x', intersect: false },
-                plugins: {
-                    legend: { labels: { color: '#d1d5db', usePointStyle: true, padding: 20 } },
-                    tooltip: {
-                        backgroundColor: '#1a1d27', borderColor: '#2d3148', borderWidth: 1,
-                        titleColor: '#d1d5db', bodyColor: '#d1d5db',
-                        callbacks: {
-                            title(items) { return items.length ? minsToHm(items[0].parsed.x) : ''; },
-                            label(ctx) {
-                                const v = ctx.parsed.y;
-                                return v != null ? ('\u0394: ' + (v>=0?'+':'') + v.toFixed(1) + '\u00b0C') : '\u0394: N/A';
+                type: 'line',
+                data: {
+                    datasets: [{
+                        label: '\u0394 Indoor \u2212 Outdoor',
+                        data: deltaXY,
+                        borderColor: 'rgb(251, 191, 36)',
+                        backgroundColor: 'rgba(251, 191, 36, 0.12)',
+                        fill: true, tension: 0.3,
+                        pointRadius: showDots ? 1.5 : 0, borderWidth: 2,
+                    }],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'x', intersect: false },
+                    plugins: {
+                        legend: { labels: { color: '#d1d5db', usePointStyle: true, padding: 20 } },
+                        tooltip: {
+                            backgroundColor: '#1a1d27', borderColor: '#2d3148', borderWidth: 1,
+                            titleColor: '#d1d5db', bodyColor: '#d1d5db',
+                            callbacks: {
+                                title(items) { return items.length ? minsToHm(items[0].parsed.x) : ''; },
+                                label(ctx) {
+                                    const v = ctx.parsed.y;
+                                    return v != null ? ('\u0394: ' + (v>=0?'+':'') + v.toFixed(1) + '\u00b0C') : '\u0394: N/A';
+                                },
                             },
                         },
                     },
-                },
-                scales: {
-                    x: {
-                        type: 'linear',
-                        ticks: { color: '#6b7280', maxTicksLimit: 10, callback: v => minsToHm(v) },
-                        grid: { color: '#1f2937' },
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            ticks: { color: '#6b7280', maxTicksLimit: 10, callback: v => minsToHm(v) },
+                            grid: { color: '#1f2937' },
+                        },
+                        y: {
+                            ticks: { color: '#6b7280', callback: v => (v>=0?'+':'') + v + '\u00b0C' },
+                            grid: { color: '#1f2937' },
+                        },
                     },
-                    y: {
-                        ticks: { color: '#6b7280', callback: v => (v>=0?'+':'') + v + '\u00b0C' },
-                        grid: { color: '#1f2937' },
-                    },
                 },
-            },
-        });
-    }
+            });
+        }
 
     fetchData();
     setInterval(fetchData, 60000);
@@ -518,7 +520,7 @@ def get_data():
             "timestamps": [], "indoor_temps": [], "outdoor_temps": [],
             "outdoor_max_temps": [], "outdoor_min_temps": [],
             "indoor_min_temps": [], "indoor_max_temps": [],
-            "outdoor_timestamps": [], "deltas": [],
+            "outdoor_timestamps": [], "deltas": [], "delta_timestamps": [],
             "current_in": None, "avg_in": None, "avg_out": None,
         })
 
@@ -544,12 +546,38 @@ def get_data():
         indoor_min_temps = []
         indoor_max_temps = []
 
-    deltas = []
-    for r in downsampled:
-        if r['temperature_c'] is not None and r['outdoor_temp_c'] is not None:
-            deltas.append(r['temperature_c'] - r['outdoor_temp_c'])
-        else:
-            deltas.append(None)
+    # --- Deltas ---
+    # Raw mode: group by outdoor_timestamp hour — only compare indoor and
+    #           outdoor that share the same outdoor_timestamp (i.e. the same
+    #           MeteoSwiss hourly reading). One delta per outdoor hour.
+    # Hourly mode: row-by-row — both values are already in the same bucket.
+    if aggregation == 'hourly':
+        deltas = []
+        for r in downsampled:
+            if r['temperature_c'] is not None and r['outdoor_temp_c'] is not None:
+                deltas.append(r['temperature_c'] - r['outdoor_temp_c'])
+            else:
+                deltas.append(None)
+        delta_timestamps = timestamps
+    else:
+        delta_groups = defaultdict(lambda: {'indoor': [], 'outdoor': None, 'ts': None})
+        for r in rows:
+            ots = r['outdoor_timestamp']
+            if not ots or r['outdoor_temp_c'] is None or r['temperature_c'] is None:
+                continue
+            key = ots[:13]  # "YYYY-MM-DD HH"
+            g = delta_groups[key]
+            g['indoor'].append(r['temperature_c'])
+            g['outdoor'] = r['outdoor_temp_c']
+            g['ts'] = ots.split(' ')[1][:5] if ' ' in ots else ots
+
+        deltas = []
+        delta_timestamps = []
+        for key in sorted(delta_groups.keys()):
+            g = delta_groups[key]
+            if g['indoor'] and g['outdoor'] is not None:
+                delta_timestamps.append(g['ts'])
+                deltas.append(sum(g['indoor']) / len(g['indoor']) - g['outdoor'])
 
     all_in = [r['temperature_c'] for r in rows if r['temperature_c'] is not None]
     all_out = [r['outdoor_temp_c'] for r in rows if r['outdoor_temp_c'] is not None]
@@ -567,6 +595,7 @@ def get_data():
         "indoor_max_temps": indoor_max_temps,
         "outdoor_timestamps": outdoor_timestamps,
         "deltas": deltas,
+        "delta_timestamps": delta_timestamps,
         "current_in": all_in[-1] if all_in else None,
         "avg_in": avg_in,
         "avg_out": avg_out,
