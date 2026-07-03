@@ -119,6 +119,7 @@ HTML_TEMPLATE = r"""
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Pi Temp Monitor</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
 <style>
     :root {
         --bg: #0f1117;
@@ -418,6 +419,20 @@ HTML_TEMPLATE = r"""
                             },
                         },
                     },
+                    zoom: {
+                        pan: {
+                            enabled: true,
+                            mode: 'x',
+                            onPanComplete({chart}) { syncZoom(chart, chart === tempChart ? deltaChart : tempChart); },
+                        },
+                        zoom: {
+                            wheel: { enabled: true },
+                            pinch: { enabled: true },
+                            drag: { enabled: true, backgroundColor: 'rgba(56,189,248,0.1)', borderColor: 'rgb(56,189,248)' },
+                            mode: 'x',
+                            onZoomComplete({chart}) { syncZoom(chart, chart === tempChart ? deltaChart : tempChart); },
+                        },
+                    },
                 },
                 scales: {
                     x: {
@@ -467,6 +482,16 @@ HTML_TEMPLATE = r"""
                                 },
                             },
                         },
+                        zoom: {
+                            pan: { enabled: true, mode: 'x', onPanComplete({chart}) { syncZoom(chart, tempChart); } },
+                            zoom: {
+                                wheel: { enabled: true },
+                                pinch: { enabled: true },
+                                drag: { enabled: true, backgroundColor: 'rgba(251,191,36,0.1)', borderColor: 'rgb(251,191,36)' },
+                                mode: 'x',
+                                onZoomComplete({chart}) { syncZoom(chart, tempChart); },
+                            },
+                        },
                     },
                     scales: {
                         x: {
@@ -485,6 +510,17 @@ HTML_TEMPLATE = r"""
 
     fetchData();
     setInterval(fetchData, 60000);
+
+    let _syncing = false;
+    function syncZoom(fromChart, toChart) {
+        if (_syncing) return;
+        _syncing = true;
+        const s = fromChart.scales.x;
+        toChart.options.scales.x.min = s.min;
+        toChart.options.scales.x.max = s.max;
+        toChart.update('none');
+        _syncing = false;
+    }
 </script>
 </body>
 </html>
