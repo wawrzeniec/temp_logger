@@ -437,13 +437,11 @@ HTML_TEMPLATE = r"""
                         pan: {
                             enabled: true,
                             mode: 'x',
-                            modifierKey: null,
                             onPanComplete({chart}) { syncZoom(chart, chart === tempChart ? deltaChart : tempChart); },
                         },
                         zoom: {
-                            wheel: { enabled: true, modifierKey: 'ctrl' },
+                            wheel: { enabled: true },
                             pinch: { enabled: true },
-                            drag: { enabled: true, modifierKey: 'ctrl', backgroundColor: 'rgba(56,189,248,0.1)', borderColor: 'rgb(56,189,248)' },
                             mode: 'x',
                             onZoomComplete({chart}) { syncZoom(chart, chart === tempChart ? deltaChart : tempChart); },
                         },
@@ -498,11 +496,10 @@ HTML_TEMPLATE = r"""
                             },
                         },
                         zoom: {
-                            pan: { enabled: true, mode: 'x', modifierKey: null, onPanComplete({chart}) { syncZoom(chart, tempChart); } },
+                            pan: { enabled: true, mode: 'x', onPanComplete({chart}) { syncZoom(chart, tempChart); } },
                             zoom: {
-                                wheel: { enabled: true, modifierKey: 'ctrl' },
+                                wheel: { enabled: true },
                                 pinch: { enabled: true },
-                                drag: { enabled: true, modifierKey: 'ctrl', backgroundColor: 'rgba(251,191,36,0.1)', borderColor: 'rgb(251,191,36)' },
                                 mode: 'x',
                                 onZoomComplete({chart}) { syncZoom(chart, tempChart); },
                             },
@@ -546,6 +543,10 @@ HTML_TEMPLATE = r"""
             ch.update('none');
         });
     }
+
+    // Double-click any chart to reset zoom
+    document.getElementById('tempChart').addEventListener('dblclick', resetZoom);
+    document.getElementById('deltaChart').addEventListener('dblclick', resetZoom);
 </script>
 </body>
 </html>
