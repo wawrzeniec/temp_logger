@@ -346,7 +346,8 @@ HTML_TEMPLATE = r"""
             {
                 label: '__fill_' + label, data: maxXY,
                 borderColor: 'transparent', backgroundColor: alpha,
-                pointRadius: 0, fill: '-1', tension: 0.3, order: orderBase + 1,
+                pointRadius: 0, fill: {target: {value: -1}, above: alpha, below: alpha},
+                tension: 0.3, order: orderBase + 1,
             },
             {
                 label: label, data: meanXY,
@@ -415,7 +416,7 @@ HTML_TEMPLATE = r"""
                 plugins: {
                     legend: {
                         labels: {
-                            color: '#d1d5db', usePointStyle: true,
+                            color: '#d1d5db', usePointStyle: false,
                             pointStyleWidth: 8, padding: 20,
                             filter: item => !item.text.startsWith('__'),
                         },
@@ -436,7 +437,7 @@ HTML_TEMPLATE = r"""
                 scales: {
                     x: {
                         type: 'time',
-                        time: { unit: 'hour', displayFormats: { hour: 'HH:mm', minute: 'HH:mm', day: 'MM-dd HH:mm' } },
+                        time: { displayFormats: { minute: 'HH:mm', hour: 'HH:mm', day: 'MM-dd HH:mm' } },
                         ticks: { color: '#6b7280', maxTicksLimit: 10 },
                         grid: { color: '#1f2937' },
                     },
@@ -470,7 +471,7 @@ HTML_TEMPLATE = r"""
                 maintainAspectRatio: false,
                 interaction: { mode: 'x', intersect: false },
                 plugins: {
-                    legend: { labels: { color: '#d1d5db', usePointStyle: true, padding: 20 } },
+                    legend: { labels: { color: '#d1d5db', usePointStyle: false, padding: 20 } },
                     tooltip: {
                         backgroundColor: '#1a1d27', borderColor: '#2d3148', borderWidth: 1,
                         titleColor: '#d1d5db', bodyColor: '#d1d5db',
@@ -486,7 +487,7 @@ HTML_TEMPLATE = r"""
                 scales: {
                     x: {
                         type: 'time',
-                        time: { unit: 'hour', displayFormats: { hour: 'HH:mm', minute: 'HH:mm', day: 'MM-dd HH:mm' } },
+                        time: { displayFormats: { minute: 'HH:mm', hour: 'HH:mm', day: 'MM-dd HH:mm' } },
                         ticks: { color: '#6b7280', maxTicksLimit: 10 },
                         grid: { color: '#1f2937' },
                     },
