@@ -802,20 +802,13 @@ def get_data():
         indoor_min_temps = []
         indoor_max_temps = []
 
-        # Build outdoor lookup from raw rows for delta (indexed by HH:MM)
-        outdoor_by_ts = {}
-        for r in rows:
-            ots = r['outdoor_timestamp']
-            if ots and r['outdoor_temp_c'] is not None:
-                key = ots.split(' ')[1][:5] if ' ' in ots else ots[:5]
-                outdoor_by_ts[key] = r['outdoor_temp_c']
-
         deltas = []
         for r in downsampled:
-            ts_hm = r['timestamp'].split(' ')[1][:5]
-            out_val = outdoor_by_ts.get(ts_hm)
-            if r['temperature_c'] is not None and out_val is not None:
-                deltas.append(r['temperature_c'] - out_val)
+            # Delta computed directly from each row's paired indoor/outdoor temps.
+            # outdoor_timestamp in the DB is already shifted -2h by the logger,
+            # so the indoor and outdoor values in the same row belong together.
+            if r['temperature_c'] is not None and r['outdoor_temp_c'] is not None:
+                deltas.append(r['temperature_c'] - r['outdoor_temp_c'])
             else:
                 deltas.append(None)
 
