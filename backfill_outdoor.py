@@ -58,6 +58,79 @@ def get_null_rows(conn: sqlite3.Connection, days: int | None):
     return cur.fetchall()
 
 
+def get_stale_rows(conn: sqlite3.Connection, days: int | None):
+    """
+    Detect rows where outdoor_temp_c is suspect: the same value repeated
+    across 3+ consecutive outdoor hours. This happens when MeteoSwiss
+    data is delayed and the logger re-uses the last available value.
+
+    Returns list of (id, timestamp) for only the stale rows.
+    """
+    if days:
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        cur = conn.execute(
+            "SELECT id, timestamp, outdoor_temp_c, outdoor_timestamp "
+            "FROM temperature_readings "
+            "WHERE outdoor_temp_c IS NOT NULL AND timestamp >= ? "
+            "ORDER BY timestamp",
+            (cutoff,),
+        )
+    else:
+        cur = conn.execute(
+            "SELECT id, timestamp, outdoor_temp_c, outdoor_timestamp "
+            "FROM temperature_readings "
+            "WHERE outdoor_temp_c IS NOT NULL "
+            "ORDER BY timestamp"
+        )
+    rows = cur.fetchall()
+
+    # Walk through rows, collapsing each outdoor hour to a single
+    # (hour_key, temp) pair. Then find runs where the same temp
+    # spans 3+ consecutive outdoor hours.
+    hourly_temps = []  # list of (outdoor_hour, outdoor_temp_c, [row_ids])
+    current_hour = None
+    current_temp = None
+    current_ids = []
+
+    for row_id, indoor_ts, outdoor_temp, outdoor_ts in rows:
+        if outdoor_ts is None:
+            continue
+        hour = outdoor_ts[:13] if len(outdoor_ts) >= 13 else outdoor_ts
+        if hour != current_hour:
+            if current_hour is not None:
+                hourly_temps.append((current_hour, current_temp, current_ids))
+            current_hour = hour
+            current_temp = outdoor_temp
+            current_ids = [(row_id, indoor_ts)]
+        else:
+            # Same hour, just collect the row
+            current_ids.append((row_id, indoor_ts))
+
+    if current_hour is not None:
+        hourly_temps.append((current_hour, current_temp, current_ids))
+
+    # Now find runs of 3+ consecutive hours with identical temp
+    stale = []
+    run_start = 0
+    for i in range(1, len(hourly_temps)):
+        h_prev, t_prev, _ = hourly_temps[i - 1]
+        h_curr, t_curr, _ = hourly_temps[i]
+        if t_prev is None or t_curr is None or t_prev != t_curr:
+            run_len = i - run_start
+            if run_len >= 3:
+                for j in range(run_start, i):
+                    stale.extend(hourly_temps[j][2])
+            run_start = i
+
+    # Check final run
+    run_len = len(hourly_temps) - run_start
+    if run_len >= 3:
+        for j in range(run_start, len(hourly_temps)):
+            stale.extend(hourly_temps[j][2])
+
+    return stale
+
+
 def backfill_row(conn: sqlite3.Connection, row_id: int, indoor_ts: str,
                  outdoor_data: dict, dry_run: bool) -> bool:
     """
@@ -180,6 +253,13 @@ def main():
         help="Show what would be updated without making changes",
     )
     parser.add_argument(
+        "--fix-stale",
+        action="store_true",
+        help="Also fix rows where outdoor temp was carried over across "
+             "different hours (e.g. same value for 6+ consecutive hours "
+             "due to delayed MeteoSwiss data).",
+    )
+    parser.add_argument(
         "--batch-delay",
         type=float,
         default=0.5,
@@ -202,20 +282,39 @@ def main():
     conn = sqlite3.connect(db_path)
     try:
         null_rows = get_null_rows(conn, days_arg)
-        total = len(null_rows)
+        stale_rows = get_stale_rows(conn, days_arg) if args.fix_stale else []
+
+        # Merge null + stale rows, deduplicating by row_id
+        all_rows = {rid: its for rid, its in null_rows}
+        for rid, its in stale_rows:
+            if rid not in all_rows:
+                all_rows[rid] = its
+
+        # Convert back to sorted list
+        target_rows = sorted(all_rows.items(), key=lambda x: x[1])
+        total = len(target_rows)
 
         if total == 0:
-            print("✓ No rows with missing outdoor data found.", flush=True)
+            print("✓ No rows with missing or stale outdoor data found.", flush=True)
             return
 
-        print(f"Found {total} row(s) with missing outdoor data.", flush=True)
+        null_count = len(null_rows)
+        stale_count = len(stale_rows)
+        msg = f"Found {total} row(s) to check"
+        if null_count:
+            msg += f" ({null_count} NULL"
+        if stale_count:
+            msg += f"{', ' if null_count else ' ('}{stale_count} stale"
+        msg += ")"
+        print(msg, flush=True)
+
         if args.dry_run:
             print("--- DRY RUN (no changes will be made) ---", flush=True)
 
         # Fetch once per unique outdoor hour (not once per row!)
         updated = 0
         for row_id, indoor_ts, data in fetch_outdoor_for_rows(
-            null_rows, args.dry_run, args.batch_delay
+            target_rows, args.dry_run, args.batch_delay
         ):
             if backfill_row(conn, row_id, indoor_ts, data, args.dry_run):
                 updated += 1
